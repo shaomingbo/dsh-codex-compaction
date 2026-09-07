@@ -393,3 +393,39 @@ test('context-overflow recovery retries once through the native seam and stays b
   assert.equal(f.requests.length, 1);
   closeTurn(f.agent.session, 1);
 });
+
+test('a real-schema-materialized Sol profile (input omitted) compacts natively end to end', async t => {
+  // Materialize a real settings section through the exported public Config:
+  // the YAML-like entry declares only reasoningEfforts, and the real schema
+  // resolves the omitted input list to [] — the documented absent-or-empty
+  // inherits contract. The owner must treat [] as undeclared, not as an
+  // explicit empty override that disables the model.
+  const { Config } = await import('@deepseek-ai/dsh-llm-pi-ai');
+  const section = Config({ providers: { 'openai-codex': {
+    apiKeyEnv: 'OPENAI_CODEX_ACCESS_TOKEN',
+    models: [{ id: SOL, reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' } }],
+  } } });
+  const materialized = section.providers['openai-codex'].models;
+  assert.deepEqual(materialized, [{ id: SOL, input: [], reasoningEfforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { chatTemplateArgs: {}, chatTemplateKwargs: {} } }],
+    'the real public schema materializes an omitted input list to an empty array (and materializes empty compat objects); the whitelist drops the non-fact fields downstream');
+
+  const f = await standardFixture(t, { settingsRoute: { models: materialized } });
+  const verdict = await f.ctx.codexBridge.nativeApplicability(SOL, f.signal);
+  assert.equal(verdict.applicable, true, 'a schema-materialized empty input array must not disable Sol');
+  assert.equal(verdict.model.contextWindow, 272000, 'capacity comes from the pinned catalog merge');
+  assert.deepEqual(verdict.model.input, ['text', 'image'], 'modalities inherit the pinned catalog default');
+
+  f.agent.options.model = SOL;
+  f.addStandardHistory(undefined, SOL);
+  f.enable();
+  await f.engine.compactNow(f.agent, f.signal);
+  const summaries = summariesOf(f.agent.session);
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].data.model, SOL);
+  const { record } = committedNativeReplacement(f.agent.session, f.ctx);
+  assert.equal(record.model, SOL);
+  assert.equal(f.requests.length, 1, 'one native compact request for Sol');
+  assert.equal(f.requests[0].body.model, SOL);
+  assert.equal(f.hostCalls.length, 0, 'the stock text summarizer never ran');
+});
