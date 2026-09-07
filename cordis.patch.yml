@@ -1,0 +1,7 @@
+# Separate host roles in one candidate package. Neither owns account login.
+# The provider bridge can remain while the policy/setup entry is disabled.
+- insert:
+    - id: dsh-codex-provider
+      name: dsh-codex-compaction/provider
+    - id: dsh-codex-compaction
+      name: dsh-codex-compaction

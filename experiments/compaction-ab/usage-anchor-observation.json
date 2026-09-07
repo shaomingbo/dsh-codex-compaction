@@ -1,0 +1,13 @@
+{
+  "kind": "observed-prototype-deficiency-before-fix",
+  "bBackendSha256": "14728a7b5fb05eb41f6c0c4756acced6d2b3de92a7fb6038c7c1c28e1f2a7b8c",
+  "fixture": "16384-character synthetic checkpoint followed by identical synthetic assistant usage in all variants",
+  "realProviderUsage": false,
+  "reportedFixtureUsage": { "inputTokens": 10000, "outputTokens": 10, "totalTokens": 10010 },
+  "measurements": [
+    { "variant": "A-basic", "hostBaselineKind": "usage", "hostTokens": 10010, "effectiveTokens": 10010 },
+    { "variant": "B-matched-price", "hostBaselineKind": "usage", "hostTokens": 10010, "effectiveTokens": 14303 },
+    { "variant": "B-native-estimate", "hostBaselineKind": "usage", "hostTokens": 10010, "effectiveTokens": 12943 }
+  ],
+  "interpretation": "The initial B total formula added current hidden payload adjustment even when the provider-usage anchor already covered it. This is an implementation deficiency to investigate, not evidence that independent backends are inherently inferior."
+}

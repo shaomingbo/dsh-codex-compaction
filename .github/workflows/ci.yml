@@ -1,0 +1,21 @@
+name: offline-plugin-validation
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.9.0 --ignore-scripts
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm peers check
+      - run: npm run check
+      - run: npm pack --dry-run --ignore-scripts
+      - run: node scripts/validate-cli.js
+      - run: git diff --check

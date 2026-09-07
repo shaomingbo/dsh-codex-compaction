@@ -1,0 +1,15 @@
+node_modules/
+*.tgz
+coverage/
+.DS_Store
+artifacts/
+
+# Local-only docs: trial logs, personal progress and center/catalog notes
+# stay on disk but never enter public Git or the published package.
+docs/*
+!docs/ARCHITECTURE.md
+!docs/CODEX_RUNTIME_V1.md
+
+# Local-only personal trial tooling (logs and progress are local evidence).
+scripts/prepare-native-trial.js
+scripts/freeze-trial-review.js
