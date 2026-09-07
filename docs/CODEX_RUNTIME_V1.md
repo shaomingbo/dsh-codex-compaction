@@ -101,7 +101,9 @@ a separate validation task.
 
 ## Verification posture
 
-This contract is currently verified **offline only** (unit, installer-isolation and
-paired cross-plugin suites with fake auth/transport and synthetic data). Live
-`gpt-6-astra`/`gpt-5.6-sol` native runs remain parent-gated acceptance and are not
-yet verified.
+This contract is verified offline by the unit, installer-isolation and paired
+cross-plugin suites (fake auth/transport, synthetic data). A human-approved
+controlled live budget additionally exercised the native path on the real
+paired account runtime; the de-identified facts, results and their limits are
+recorded in [docs/VALIDATION.md](VALIDATION.md). No real-account availability,
+token, cost or latency claim follows from any of these suites.

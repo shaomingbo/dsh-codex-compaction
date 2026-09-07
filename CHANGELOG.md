@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0
+
+First stable release. Content equals the reviewed `0.3.0-rc.1` candidate plus
+the follow-ups below; the RC tags remain as history.
+
+- **Stable identity:** installer default source pins `#v0.3.0`; a check.js
+  contract now verifies the installer source and every packaged `files` entry
+  stay in lockstep with the package version.
+- **Public validation facts:** a de-identified `docs/VALIDATION.md` (bilingual)
+  documents the verified environment, offline suite counts (121/46/34 core,
+  240 account, 12 paired), the controlled 16-request live budget, the Astra
+  restart-recall pass, the Sol RC1 empty-input fix and its post-fix native
+  pass with the honest recall-failure note, and the legacy-reader byte
+  compatibility result — with no private identifiers. None of it claims
+  lossless recall or superiority over other implementations.
+- **Semantic-recall documentation:** README now separates lossy semantic
+  recall from safety refusals (already in the RC delta).
+
+No production logic changed relative to `0.3.0-rc.1` + the already-released
+follow-up commits; see the RC entry below for the feature set.
+
 ## 0.3.0-rc.1 (release candidate)
 
 First official-basic release candidate. The stock `BasicCompactionEngine` stays the

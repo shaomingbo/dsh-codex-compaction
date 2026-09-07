@@ -9,6 +9,7 @@ artifacts/
 docs/*
 !docs/ARCHITECTURE.md
 !docs/CODEX_RUNTIME_V1.md
+!docs/VALIDATION.md
 
 # Local-only personal trial tooling (logs and progress are local evidence).
 scripts/prepare-native-trial.js

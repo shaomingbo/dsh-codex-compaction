@@ -1,6 +1,6 @@
 # Official-basic native compaction architecture
 
-`dsh-codex-compaction` `0.3.0-rc.1` keeps the stock official `BasicCompactionEngine`
+`dsh-codex-compaction` `0.3.0` keeps the stock official `BasicCompactionEngine`
 as the primary and only automatic compaction backend and adds an optional
 account-owned native summarization/replay seam for standard `openai-codex` sessions,
 plus the legacy structured reader. The earlier A/B experiment established engineering
@@ -80,8 +80,10 @@ authentication or performs network I/O and reports fixed reason codes.
 
 ## Version and release posture
 
-Release-candidate pair: `dsh-codex-compaction` `0.3.0-rc.1` + `dsh-token-usage`
-`5.1.0-rc.1`, both **release candidates, not stable releases**. DSH host `0.1.2-rc.1`; the auth SDK
+Stable pair: `dsh-codex-compaction` `0.3.0` + `dsh-token-usage` `5.1.0`; each
+fixed tag is assumed only after it is actually pushed and verified, and the
+historical RC tags (`0.3.0-rc.1`, `5.1.0-rc.1`, `5.1.0-rc.2`) are retained as
+history. DSH host `0.1.2-rc.1`; the auth SDK
 `0.82.1` stays unchanged and the native protocol module uses the pinned `0.84.4`
 alias. The account workspace's `node_modules` points at the live Web profile, so
 dependency installation and account testing happen only in isolated source
@@ -89,11 +91,15 @@ snapshots.
 
 ## Verification posture
 
-This RC is verified **offline only**: unit, frozen legacy-A, comparison, installer
-isolation and paired cross-plugin suites run with fake auth/transport and synthetic
-data. Live native `gpt-6-astra`/`gpt-5.6-sol` runs, GUI activation and real-account
-behavior remain parent-gated acceptance and are NOT yet verified. The profile native
-default stays **off** in the RC; enabling it is a reviewed rollout step.
+Offline suites (unit, frozen legacy-A, comparison, installer isolation, paired
+cross-plugin) run with fake auth/transport and synthetic data only, and no
+real-account availability, token, cost or latency claim follows from them. A
+human-approved controlled live budget additionally exercised the native path on
+the real paired account runtime; the de-identified facts, results and their
+limits — including the honest recall failure and the no-attribution /
+no-cross-model-comparison boundaries — are recorded in
+[docs/VALIDATION.md](VALIDATION.md). The profile native default stays **off**;
+enabling it is a reviewed rollout step, not a packaging default.
 
 The frozen A code/tests and original comparison evidence stay under `experiments`
 as archived evidence, not shipped as a credential fallback.

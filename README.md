@@ -2,26 +2,27 @@
 
 [中文](README.zh.md)
 
-`0.3.0-rc.1` is a **release candidate**: the stock official `BasicCompactionEngine` stays
+`0.3.0` is the **stable release**: the stock official `BasicCompactionEngine` stays
 the primary and only automatic compaction backend, and this package adds an optional
 account-owned **native summarization/replay seam** for standard `openai-codex` sessions
-plus the legacy structured reader. No DSH core patches, no second login. **The RC
-candidate is not a stable release**: the fixed tag below is assumed only after
-the release is actually pushed and verified.
+plus the legacy structured reader. No DSH core patches, no second login. The fixed
+tag below is assumed only after the maintainer has actually pushed and verified it;
+the historical RC tags (`0.3.0-rc.1`, and `5.1.0-rc.1`/`5.1.0-rc.2` for the companion
+account package) are retained.
 
 ## Install (after the tag exists)
 
 ```bash
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0-rc.1
+npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0-rc.1 status
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0-rc.1 uninstall
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0-rc.1 install --profile <name> --source link:<local-path>
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0-rc.1 --help
+npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 status
+npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 uninstall
+npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 install --profile <name> --source link:<local-path>
+npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 --help
 ```
 
 - The installer requires the exact tested `dsh` CLI **`0.1.2-rc.1`** on PATH and delegates
@@ -33,8 +34,8 @@ npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0-rc.1 --help
   fails closed with guidance.** There is no direct-manifest fallback. Check
   `dsh --version`; note the historical PATH CLI `0.1.2-alpha.3` is a different, older
   build than the tested `0.1.2-rc.1` and is rejected.
-- Companion account package: **`dsh-token-usage` `5.1.0-rc.1`** from the same release
-  train (`github:shaomingbo/dsh-token-usage#v5.1.0-rc.1`). It is a capability companion,
+- Companion account package: **`dsh-token-usage` `5.1.0`** from the same release
+  train (`github:shaomingbo/dsh-token-usage#v5.1.0`). It is a capability companion,
   not a registry dependency: this package never guesses account versions and instead
   preflights the `codex-runtime/v1` protocol and auth owner at runtime. Adjacent/older
   DSH versions are unsupported or unknown; only what the CI matrix runs is claimed.
@@ -51,8 +52,9 @@ npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0-rc.1 --help
    session to let the account-owned native runtime produce the compaction summary
    through the same official engine. `/codex-native off` stops new native creation —
    existing native state stays readable through its matching reader. `inherit` returns
-   the session to the profile default (RC: profile default is **off**; enabling it is a
-   reviewed rollout step, not a packaging default). Preferences survive host restarts.
+   the session to the profile default (profile default is **off** in this release;
+   enabling it is a reviewed rollout step, not a packaging default). Preferences
+   survive host restarts.
 3. **Honest boundaries.**
    - A native summary counts only after official basic replaces history in the session
      log. `/codex-context` shows the observed logical replacement and the last attempt;
@@ -104,6 +106,6 @@ Offline tests use fake auth/transport and synthetic data only. No real-account
 availability, token, cost or latency claim follows from them.
 
 See [architecture](docs/ARCHITECTURE.md), [capability contract](docs/CODEX_RUNTIME_V1.md),
-and [CHANGELOG](CHANGELOG.md).
+[verified validation facts](docs/VALIDATION.md), and [CHANGELOG](CHANGELOG.md).
 
 MIT.
