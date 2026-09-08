@@ -1,6 +1,43 @@
 # Changelog
 
-## 0.3.0
+## 0.3.1
+
+Paired with `dsh-token-usage` `5.1.2`. The recovery fix has passed an authorized real
+acceptance run and the frozen production candidate's full regression. Final packaging,
+tag identity and release-tag installation results are recorded in the GitHub release.
+
+- Native SSE completes at a valid completed/done event with one valid compaction item,
+  not HTTP EOF. The account owner classifies premature EOF/socket failure as recoverable
+  `CODEX_RUNTIME_RESPONSE_STREAM`, malformed protocol as non-retryable
+  `CODEX_RUNTIME_RESPONSE_PROTOCOL`, and preserves the first lease stop reason.
+- Native compaction leases and native converters get 300000ms; ordinary request leases
+  and replay/text converters remain 120000ms. Recovery never renews the original lease.
+- One shared extra request per lease: one native retry after 200ms for network/5xx/stream
+  failures OR one allowlisted text fallback, never both. Same account/model/endpoint;
+  no recovery on expired/cancelled leases or protocol/identity failures, and no text fallback
+  for native carrier histories. This is plugin policy, not an official Codex Native-to-text fallback.
+- Bounded process-local failure suppression lasts 60 seconds per session/provider/model.
+  Ordinary generation continues; only an observed official history replacement with a clean
+  end clears failure state. No new command, persistent event schema or model-capacity override.
+- Fixed-field diagnostics expose phases, budget, timings and bounded event/byte/request
+  counts without raw content, account identifiers or credentials.
+- De-identified real acceptance: budget 300000ms, elapsed 157372ms, one request, valid item
+  plus completed event, a new official Basic history replacement, and approximately 146849
+  tokens shadowed. The maintainer read `compaction/summary`, `user/message`, `compaction/end`
+  and successful `command/done` back from the disk journal. This proves this run's recorded
+  result, not fsync, crash recovery, lossless recall or elimination of all timeouts.
+- The maintainer reran the frozen production candidate: 498 passing tests (plugin 135 +
+  legacy-A 46 + comparison 34 + account 266 + paired 17). `scripts/validate-cli.js` passed
+  the real rc.1 temporary-home install/repeat/status/dump/uninstall cycle without booting a
+  host. See [validation](docs/VALIDATION.md).
+- Known non-blocking limitation: cancellation can display `CODEX_RUNTIME_ERROR`.
+  Refreshing may cancel a pending manual command; tab switching alone has not been shown
+  to cause cancellation. Window hard limits and persistent upstream failures still apply.
+- Public compaction compatibility remains exactly DSH `0.1.2-rc.1`. The account installer
+  retains its existing alpha.3 + rc.1 scope; a mixed alpha.3 launcher / rc.1 Web+Basic
+  environment is not proof of full native runtime compatibility on pure alpha.3.
+
+## 0.3.0 (historical stable release)
 
 First stable release. Content equals the reviewed `0.3.0-rc.1` candidate plus
 the follow-ups below; the RC tags remain as history.

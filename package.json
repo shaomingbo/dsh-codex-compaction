@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-compaction",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Official-basic Codex compaction with an optional account-owned native summarization seam and legacy structured reader; no core patches or duplicate login.",
   "type": "module",
   "main": "src/index.js",
@@ -12,7 +12,7 @@
     "./package.json": "./package.json"
   },
   "bin": { "dsh-codex-compaction": "bin/install.js" },
-  "files": ["src", "bin", "cordis.patch.yml", "README.md", "README.zh.md", "LICENSE", "CHANGELOG.md", "docs/ARCHITECTURE.md", "docs/CODEX_RUNTIME_V1.md", "docs/VALIDATION.md"],
+  "files": ["src", "bin", "cordis.patch.yml", "README.md", "README.zh.md", "LICENSE", "CHANGELOG.md", "docs/ARCHITECTURE.md", "docs/CODEX_RUNTIME_V1.md", "docs/VALIDATION.md", "docs/RECOVERY_FIX.md"],
   "scripts": {
     "test": "node --test test/*.test.js",
     "check": "node scripts/check.js && npm test && npm run test:legacy-a && npm run test:compaction-ab",

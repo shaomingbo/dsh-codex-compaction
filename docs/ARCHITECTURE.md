@@ -1,6 +1,6 @@
 # Official-basic native compaction architecture
 
-`dsh-codex-compaction` `0.3.0` keeps the stock official `BasicCompactionEngine`
+`dsh-codex-compaction` `0.3.1` keeps the stock official `BasicCompactionEngine`
 as the primary and only automatic compaction backend and adds an optional
 account-owned native summarization/replay seam for standard `openai-codex` sessions,
 plus the legacy structured reader. The earlier A/B experiment established engineering
@@ -17,8 +17,8 @@ compatibility** for pre-existing sessions, not the production path.
 2. **Standard-route seam** (`native-seam.js`, `preference-recovery.js`): intercepts
    the official engine's `purpose=compaction` `llm/stream` call per session,
    recognizes only the real official basic instruction tail, binds one owner lease
-   (same account/model/endpoint) and allows at most one transparent text fallback
-   per recoverable native failure inside that lease. Histories containing native
+   (same account/model/endpoint) and allows at most one extra recovery request:
+   native retry OR transparent text fallback inside that lease, never both. Histories containing native
    carriers fail closed on every guard branch — they never reach the plain adapter.
    Session preferences survive host restarts by reading the host's own persisted
    public command lifecycle events only.
@@ -54,6 +54,33 @@ flowchart LR
   F -->|"later ordinary requests"| C
 ```
 
+## 0.3.1 recovery correction
+
+The owner transport treats a valid completed/done event plus one valid compaction item as the
+stream boundary, not HTTP EOF. Premature EOF/socket failure is recoverable RESPONSE_STREAM;
+malformed protocol remains non-retryable RESPONSE_PROTOCOL. The first lease stop cause
+(TIMEOUT/CANCELLED/CLOSED/DISPOSED) survives handle reuse. Compaction leases and native
+converters get 300000ms; ordinary leases and replay/text converters keep 120000ms. Fixed-field
+phase/timing/count diagnostics include `budgetMs` and fixed-enum `eventCounts`, not raw data.
+
+`recovery.js` adds bounded process-local admission state to the existing seam: one shared
+extra-request budget (native retry OR same-lease text fallback), plus a fixed 60-second
+per-session/provider/model interval after terminal failures. Native retry uses 200ms backoff;
+it never renews the owner deadline or changes the bound account/model/endpoint. TIMEOUT is
+not recoverable on an expired lease. Native-to-text fallback is plugin policy, not an official
+Codex behavior claim. Ordinary model calls still pass through unchanged. Official public
+compaction start/end and replacement-source events correlate transaction outcomes; a streamed
+summary does not reset failures until the matching replacement and clean end are observed.
+Skipped/busy/cancelled requests do not extend the interval. No private host mutation or
+persistent event type is added.
+
+The accepted real run completed in 157372ms with one request under a 300000ms budget, followed
+by official Basic history replacement and disk-journal readback; see [validation](VALIDATION.md).
+It does not prove fsync, crash recovery or elimination of all timeouts. Cancellation may still
+misdisplay as `CODEX_RUNTIME_ERROR` (a known non-blocking limitation). A refresh may cancel a
+pending manual command; tab switching alone is not an established cause. Persistent failures
+and hard context limits can still stop a task. See [the recovery details](RECOVERY_FIX.md).
+
 ## Native state
 
 The native summary is the owner codec's existing versioned **V1 text envelope**,
@@ -80,14 +107,16 @@ authentication or performs network I/O and reports fixed reason codes.
 
 ## Version and release posture
 
-Stable pair: `dsh-codex-compaction` `0.3.0` + `dsh-token-usage` `5.1.0`; each
-fixed tag is assumed only after it is actually pushed and verified, and the
-historical RC tags (`0.3.0-rc.1`, `5.1.0-rc.1`, `5.1.0-rc.2`) are retained as
-history. DSH host `0.1.2-rc.1`; the auth SDK
-`0.82.1` stays unchanged and the native protocol module uses the pinned `0.84.4`
-alias. The account workspace's `node_modules` points at the live Web profile, so
-dependency installation and account testing happen only in isolated source
-snapshots.
+Candidate pair: `dsh-codex-compaction` `0.3.1` + `dsh-token-usage` `5.1.2`; the recovery
+behavior is live-accepted and the frozen production candidate's 498 tests have been rerun
+successfully, but the new tags await publication/verification and final packaging checks. Historical stable and RC tags (`0.3.0`, `0.3.0-rc.1`, `5.1.0`, `5.1.1`,
+`5.1.0-rc.1`, `5.1.0-rc.2`) and evidence remain. Compaction supports only published DSH
+`0.1.2-rc.1`. The account installer retains alpha.3 + rc.1 support; temporary-home install/dump
+checks on both are final release gates. The accepted environment's launcher was alpha.3 while
+actual Web/Basic dependencies were rc.1; it does not prove pure-alpha.3 runtime compatibility.
+The auth SDK `0.82.1` stays unchanged and the native protocol module uses the pinned `0.84.4`
+alias. Dependency installation and account tests use isolated source snapshots when the
+account workspace's `node_modules` points at the live Web profile.
 
 ## Verification posture
 

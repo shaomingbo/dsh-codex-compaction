@@ -2,27 +2,28 @@
 
 [中文](README.zh.md)
 
-`0.3.0` is the **stable release**: the stock official `BasicCompactionEngine` stays
-the primary and only automatic compaction backend, and this package adds an optional
-account-owned **native summarization/replay seam** for standard `openai-codex` sessions
-plus the legacy structured reader. No DSH core patches, no second login. The fixed
-tag below is assumed only after the maintainer has actually pushed and verified it;
-the historical RC tags (`0.3.0-rc.1`, and `5.1.0-rc.1`/`5.1.0-rc.2` for the companion
-account package) are retained.
+`0.3.1` contains the **live-accepted recovery fix**, paired with
+`dsh-token-usage` `5.1.2`. The stock official `BasicCompactionEngine` stays the primary
+and only automatic compaction backend; this package adds an optional account-owned
+**native summarization/replay seam** for standard `openai-codex` sessions plus the
+legacy structured reader. No DSH core patches, no second login. Use the matching fixed
+tags below; publication identity and tag installation checks are recorded in GitHub releases. Historical
+`0.3.0`/`0.3.0-rc.1` and companion `5.1.0`/`5.1.1`/`5.1.0-rc.1`/`5.1.0-rc.2`
+tags and their validation evidence are retained.
 
 ## Install (after the tag exists)
 
 ```bash
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 status
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 uninstall
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 install --profile <name> --source link:<local-path>
-npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 --help
 ```
 
 - The installer requires the exact tested `dsh` CLI **`0.1.2-rc.1`** on PATH and delegates
@@ -34,8 +35,8 @@ npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 --help
   fails closed with guidance.** There is no direct-manifest fallback. Check
   `dsh --version`; note the historical PATH CLI `0.1.2-alpha.3` is a different, older
   build than the tested `0.1.2-rc.1` and is rejected.
-- Companion account package: **`dsh-token-usage` `5.1.0`** from the same release
-  train (`github:shaomingbo/dsh-token-usage#v5.1.0`). It is a capability companion,
+- Companion account package: **`dsh-token-usage` `5.1.2`** from the same
+  release train (`github:shaomingbo/dsh-token-usage#v5.1.2`, after publication). It is a capability companion,
   not a registry dependency: this package never guesses account versions and instead
   preflights the `codex-runtime/v1` protocol and auth owner at runtime. Adjacent/older
   DSH versions are unsupported or unknown; only what the CI matrix runs is claimed.
@@ -59,10 +60,10 @@ npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 --help
    - A native summary counts only after official basic replaces history in the session
      log. `/codex-context` shows the observed logical replacement and the last attempt;
      it does not independently confirm host-owned disk persistence.
-   - At most **one transparent text fallback** per recoverable native failure, inside
-     the same owner lease — same account, model and endpoint. Cancellation, identity
-     mismatch, invalid checkpoints and histories that already contain native carriers
-     never fall back; those requests fail with a fixed error code.
+   - At most **one extra recovery request** per owner lease: native retry OR transparent
+     text fallback — same account, model and endpoint, never stacked or renewed.
+     Cancellation, expired leases, identity/protocol errors and invalid checkpoints do
+     not trigger recovery. Histories with native carriers never fall back to text.
    - **Image histories are not taken over** in this first release; they keep the stock
      text path. Native carriers mixed with unsupported media are rejected explicitly.
    - **Semantic recall is lossy, distinct from safety refusals.** A native checkpoint
@@ -82,6 +83,42 @@ npx --yes github:shaomingbo/dsh-codex-compaction#v0.3.0 --help
    on standard sessions. Old logs are never rewritten and old readers are preserved.
    Uninstalling the entire package removes the DSH bridge too; keep a matching reader
    for native histories.
+
+## 0.3.1 recovery correction
+
+Native compaction leases/converters get up to 300 seconds, while ordinary request leases and
+replay/text converters stay at 120 seconds. Fixed-field diagnostics report phases, timings,
+byte/request counts, `budgetMs` and fixed-enum `eventCounts`, never raw content or identifiers.
+See [the contract](docs/CODEX_RUNTIME_V1.md).
+
+Native SSE finishes at a valid `response.completed`/`response.done` with one valid compaction
+item, without waiting for HTTP EOF. Premature EOF (including truncated frames) or socket failure
+is recoverable `CODEX_RUNTIME_RESPONSE_STREAM`; malformed protocol is non-retryable
+`CODEX_RUNTIME_RESPONSE_PROTOCOL`. The first lease stop reason (TIMEOUT/CANCELLED/CLOSED/DISPOSED)
+is preserved. There is **one shared extra request**: network/5xx/premature stream failures prefer
+one native retry after 200ms; other allowlisted availability failures may use one same-lease
+text fallback. These cannot stack, change accounts or reset the deadline; expired leases never
+receive fallback. Native-to-text fallback is plugin policy, not an official Codex behavior claim.
+
+After a terminal attempt fails, this plugin suppresses new taken-over compaction requests for
+60 seconds per session/provider/model. Ordinary task requests continue; the next eligible
+official trigger retries automatically. `/codex-context` and `/codex-native status` disclose
+the failure and next allowed time. Only an observed successful official history replacement
+with a clean end clears failure state; streaming a summary alone does not. This state is bounded
+and process-local (reset by restart), with no new command, storage schema or model-capacity
+override. Persistent compaction failures and hard context limits can still stop a task.
+
+An authorized real run selected 300000ms, completed in 157372ms with one request and a valid
+item plus completed event, and produced a new official Basic history replacement with about
+146849 tokens shadowed. The maintainer read summary/user-message/end and successful command/done
+back from the disk journal. This is evidence for that run, not fsync, crash recovery or a fix
+for every timeout. The maintainer reran the frozen production candidate: 498 tests passed
+(plugin 135 + legacy-A 46 + comparison 34 + account 266 + paired 17), as did the rc.1 temporary-home
+installer cycle. Final packaging checks and release-tag installation remain separate steps. See [recovery validation](docs/RECOVERY_FIX.md).
+
+**Known non-blocking limitation:** cancellation may display `CODEX_RUNTIME_ERROR`.
+Refreshing can cancel a pending manual command; tab switching alone has not been shown to
+cancel it. This display issue is retained as a limitation, not a release blocker.
 
 ## Development
 

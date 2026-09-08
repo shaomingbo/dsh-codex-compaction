@@ -5,15 +5,17 @@
 // summarization/replay transport. Registered after the account plugin's own
 // llm/stream middleware so account preparation still runs before any
 // short-circuit, and never registered when the account capability is absent.
-import { isNativeCarrier, historyHasImages } from './runtime-adapter.js';
+import { isNativeCarrier, historyHasImages, operationDiagnostic } from './runtime-adapter.js';
 import { STANDARD_ROUTE, failure } from './constants.js';
 import { basicInstructionTail } from './native-checkpoint.js';
+import { CompactionRecovery, cancelled } from './recovery.js';
 
 // Confirmed native availability/request failure categories only. Auth
 // failures, client-side HTTP errors and every unmatched cause stay on the
 // native path's own failure reporting — never a silent text fallback.
 const RECOVERABLE = new Set(['CODEX_RUNTIME_NOT_READY', 'CODEX_RUNTIME_NOT_CONFIGURED',
-  'CODEX_RUNTIME_TIMEOUT', 'CODEX_RUNTIME_NETWORK', 'CODEX_RUNTIME_RESPONSE_STREAM']);
+  'CODEX_RUNTIME_NETWORK', 'CODEX_RUNTIME_RESPONSE_STREAM']);
+const retryNative = code => ['CODEX_RUNTIME_NETWORK', 'CODEX_RUNTIME_RESPONSE_STREAM'].includes(code) || /^CODEX_RUNTIME_HTTP_5\d\d$/.test(code);
 const reasonCode = reason => typeof reason === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(reason) ? reason : 'CODEX_SEAM_UNKNOWN_REASON';
 const codeOf = error => typeof error?.code === 'string' && error.code ? error.code
   : typeof error?.failure?.code === 'string' ? error.failure.code : 'CODEX_RUNTIME_ERROR';
@@ -30,7 +32,8 @@ const MAX_ATTEMPTS = 4096;
 
 /** Profile default (RC: off) plus per-session on/off overrides. */
 export class NativeSessionState {
-  constructor(profileNative = false, recoverPreference) {
+  constructor(profileNative = false, recoverPreference, recoveryOptions) {
+    this.recovery = new CompactionRecovery(recoveryOptions);
     this.profileNative = profileNative === true;
     this.sessions = new Map();
     this.attempts = new Map();
@@ -75,13 +78,14 @@ export class NativeSessionState {
     return this.profileNative;
   }
   recordAttempt(sessionId, attempt) {
-    this.attempts.set(sessionId, { ...attempt, sessionId, at: Date.now() });
+    this.attempts.set(sessionId, { ...attempt, sessionId, at: this.recovery.now() });
     if (this.attempts.size > MAX_ATTEMPTS) this.attempts.delete(this.attempts.keys().next().value);
   }
   lastAttempt(sessionId) { return this.attempts.get(sessionId); }
   nativeStatus(sessionId) {
     return { profile: this.profileNative, session: this.sessionPreference(sessionId),
-      effective: this.effective(sessionId), lastAttempt: this.lastAttempt(sessionId) ?? null };
+      effective: this.effective(sessionId), lastAttempt: this.lastAttempt(sessionId) ?? null,
+      recovery: this.recovery.status(sessionId) };
   }
 }
 
@@ -150,49 +154,70 @@ export class NativeCompactionSeam {
         return yield* next();
       }
       const history = options.messages.slice(0, -1);
-      let lease;
+      const recovery = this.state.recovery;
+      const flight = recovery.begin({ ...options, sessionId });
+      let lease, cause, kind = 'native', outputComplete = false;
+      const record = fields => this.state.recordAttempt(sessionId, { kind, model: options.model, ...(cause ? { cause } : {}), ...fields });
+      record({ outcome: 'running' });
       try {
         lease = await this.adapter.seamLease({ model: options.model, signal });
-      } catch (error) {
-        // No native attempt ran; nothing is owed to the fallback contract.
-        // The untouched original path continues for availability gaps —
-        // except that carrier histories still fail closed here.
-        const code = codeOf(error);
-        this.state.recordAttempt(sessionId, { kind: 'none', reason: `lease-unavailable:${code}`, model: options.model });
-        if (signal?.aborted || error?.code === 'ABORTED') throw error;
-        if (carriers.length) {
-          throw failure('CODEX_NATIVE_REPLAY_UNAVAILABLE', `Native Codex checkpoints could not be bound to the owner runtime (${code}); the request was not sent.`);
-        }
-        return yield* next();
-      }
-      try {
-        const native = await this.adapter.seamCompactOnLease(lease, { model: options.model, messages: history,
+        const compact = () => this.adapter.seamCompactOnLease(lease, { model: options.model, messages: history,
           system: options.system, tools: options.tools, signal });
-        this.state.recordAttempt(sessionId, { kind: 'native', outcome: 'native', model: options.model,
-          ...(native.usage === undefined ? {} : { usage: native.usage }) });
-        // The owner codec's versioned envelope IS the summary block; official
-        // basic frames and commits it with its own checkpoint source.
+        let native;
+        try { native = await compact(); }
+        catch (error) {
+          cause = codeOf(error);
+          if (!isRecoverableNativeFailure(error, signal)) throw error;
+          // A single shared recovery budget: native retry OR text fallback,
+          // never both. Reuse the owner lease without resetting its deadline.
+          if (retryNative(cause)) {
+            record({ outcome: 'retrying' });
+            await recovery.delay(200, signal);
+            signal?.throwIfAborted();
+            native = await compact();
+          } else {
+            if (carriers.length) throw error;
+            kind = 'fallback';
+            record({ outcome: 'running' });
+            let terminal = false;
+            for await (const chunk of this.adapter.seamStreamOnLease(lease, options)) {
+              if (chunk.type === 'finish') {
+                if (chunk.reason?.kind !== 'stop') throw failure(chunk.reason?.failure?.code ?? 'CODEX_NATIVE_FALLBACK_FAILED', 'Text fallback did not finish successfully.');
+                terminal = true;
+              }
+              yield chunk;
+            }
+            if (!terminal) throw failure('CODEX_NATIVE_FALLBACK_FAILED', 'Text fallback ended without a successful finish.');
+            signal?.throwIfAborted();
+            outputComplete = true;
+            record({ outcome: 'fallback-text', diagnostics: operationDiagnostic(lease) });
+            return;
+          }
+        }
+        signal?.throwIfAborted();
         yield { type: 'block-start', index: 0, blockType: 'text' };
         yield { type: 'text-delta', index: 0, text: native.envelope };
         yield { type: 'block-end', index: 0, block: { type: 'text', text: native.envelope } };
         if (native.usage !== undefined) yield { type: 'usage', usage: native.usage };
         yield { type: 'finish', reason: { kind: 'stop' } };
+        outputComplete = true;
+        record({ outcome: 'native', diagnostics: operationDiagnostic(lease), ...(native.usage === undefined ? {} : { usage: native.usage }) });
         return;
       } catch (error) {
         const code = codeOf(error);
-        // Histories containing native carriers never fall back: the text path
-        // would hand opaque envelopes to a plain adapter. Plain histories fall
-        // back at most once, INSIDE the same owner lease — identical account
-        // identity, model, and fixed endpoint as the failed native attempt —
-        // so a changed current connection can never substitute silently.
-        if (carriers.length || !isRecoverableNativeFailure(error, signal)) {
-          this.state.recordAttempt(sessionId, { kind: 'native', outcome: 'failed', cause: code, model: options.model });
-          throw error;
+        record({ outcome: 'failed', cause: cause ?? code, failure: code, diagnostics: operationDiagnostic(lease, error) });
+        if (cancelled(error, signal)) flight.ignored = true;
+        else recovery.fail(flight, code);
+        if (!lease && carriers.length && !cancelled(error, signal) && code !== 'CODEX_RUNTIME_TIMEOUT') {
+          throw failure('CODEX_NATIVE_REPLAY_UNAVAILABLE', `Native checkpoints could not bind to their owner (${code}); no request was sent.`);
         }
-        this.state.recordAttempt(sessionId, { kind: 'fallback', outcome: 'fallback-text', cause: code, model: options.model });
-        yield* this.adapter.seamStreamOnLease(lease, options);
-        return;
-      } finally { lease.close(); }
+        throw error;
+      } finally {
+        // Generator cancellation is not another retryable failure.
+        if (!outputComplete && !flight.failed) flight.ignored = true;
+        recovery.release(flight);
+        lease?.close();
+      }
     }
     if (carriers.length) {
       if (images) {

@@ -141,7 +141,7 @@ const SOL = 'gpt-5.6-sol';
 const astraProfile = () => ({ id: ASTRA, contextWindow: 872000, maxTokens: 128000, input: ['text', 'image'],
   reasoningEfforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } });
 
-async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute, deferEngine = false } = {}) {
+async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute, deferEngine = false, nativeReply, timeoutMs = 30000, compactionTimeoutMs = timeoutMs } = {}) {
   const route = { apiKeyEnv: 'OPENAI_CODEX_ACCESS_TOKEN', ...(settingsRoute ?? {}), models: settingsRoute?.models ?? [astraProfile()] };
   const reply = events => { const response = sse(events); if (responseMime) response.headers.set('content-type', responseMime); return response; };
   const ctx = new Context();
@@ -163,19 +163,23 @@ async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute
   }
   ctx.llm.registerAdapter(['openai-codex'], new Original());
   await ctx.plugin(providerEntry);
-  let account = 'standard-fixture-account', fetches = 0;
+  let account = 'standard-fixture-account', fetches = 0, resolutions = 0;
   const requests = [];
   const facts = createCodexModelFacts({ getSettings: () => ({ providers: { 'openai-codex': route } }), credentialRef: 'OPENAI_CODEX_ACCESS_TOKEN' });
   const runtime = createCodexRuntime({ configured: () => true,
-    resolveOAuth: async () => ({ apiKey: token(account), headers: { 'chatgpt-account-id': account } }),
+    resolveOAuth: async () => { resolutions++; return { apiKey: token(account), headers: { 'chatgpt-account-id': account } }; },
     fetchImpl: async (url, init) => {
       const body = JSON.parse(typeof init.body === 'string' ? init.body : zstdDecompressSync(init.body).toString());
       requests.push({ body, account: new Headers(init.headers).get('chatgpt-account-id'), fetches });
-      if (failFirstStatus && ++fetches === 1) return new Response('transient fixture failure', { status: failFirstStatus });
-      if (body.input.some(item => item.type === 'compaction_trigger')) return reply([
-        { type: 'response.output_item.done', item: { type: 'compaction', encrypted_content: 'opaque-standard-fixture'.repeat(120) } },
-        { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 120, output_tokens: 20, total_tokens: 140, input_tokens_details: { cached_tokens: 40 } } } },
-      ]);
+      fetches++;
+      if (failFirstStatus && fetches === 1) return new Response('transient fixture failure', { status: failFirstStatus });
+      if (body.input.some(item => item.type === 'compaction_trigger')) {
+        const events = [
+          { type: 'response.output_item.done', item: { type: 'compaction', encrypted_content: 'opaque-standard-fixture'.repeat(120) } },
+          { type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 120, output_tokens: 20, total_tokens: 140, input_tokens_details: { cached_tokens: 40 } } } },
+        ];
+        return nativeReply ? nativeReply({ events, fetches, signal: init.signal }) : reply(events);
+      }
       return reply([
         { type: 'response.created', response: { id: 'standard-fixture', status: 'in_progress' } },
         { type: 'response.output_item.added', output_index: 0, item: { type: 'message', id: 'standard-message', role: 'assistant', content: [], status: 'in_progress' } },
@@ -185,7 +189,7 @@ async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute
         { type: 'response.output_item.done', output_index: 0, item: { type: 'message', id: 'standard-message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'continued', annotations: [] }] } },
         { type: 'response.completed', response: { id: 'standard-fixture', status: 'completed', usage: { input_tokens: 20, output_tokens: 1, total_tokens: 21 } } },
       ]);
-    }, timeoutMs: 30000, resolveModelFacts: facts.resolveModelFacts, routeStatus: facts.routeStatus });
+    }, timeoutMs, compactionTimeoutMs, resolveModelFacts: facts.resolveModelFacts, routeStatus: facts.routeStatus });
   const owner = await ctx.plugin({ name: 'isolated-accounts-native-entry', apply(ownerCtx) { ownerCtx.provide('codexRuntime', runtime); ownerCtx.on('dispose', () => runtime.dispose()); } });
   const signal = new AbortController().signal;
   const session = ctx.sessions.create();
@@ -196,7 +200,7 @@ async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute
   const makeEngine = config => new BasicCompactionEngine(ctx, config);
   const engine = deferEngine ? undefined : makeEngine({ auto: false });
   t.after(() => ctx.fiber.dispose());
-  return { ctx, runtime, owner, agent, engine, makeEngine, requests, hostCalls, signal,
+  return { ctx, runtime, owner, agent, engine, makeEngine, requests, hostCalls, signal, get resolutions() { return resolutions; },
     addStandardHistory(target = session, model = ASTRA) {
       const turn = target.seq;
       target.append('request/header', { header: { config: { provider: 'openai-codex', model }, system: 'Preserve exact fixture constraints.' }, reason: target.requestHeader() ? 'series' : 'initial' });
@@ -270,24 +274,134 @@ test('committed native state replays through the standard route on later ordinar
   assert.equal(f.hostCalls.length, 0);
 });
 
-test('one transparent in-lease text fallback after a recoverable server failure', async t => {
+test('one in-lease native retry after a recoverable server failure never walks stock', async t => {
   const f = await standardFixture(t, { failFirstStatus: 503 });
   f.addStandardHistory();
   f.enable();
   await f.engine.compactNow(f.agent, f.signal);
   const event = f.agent.session.snapshotEvents().findLast(e => e.type === 'compaction/summary');
-  assert.ok(event, 'basic still committed through the fallback');
-  // The fallback records only the plain stream's own reported usage; the
-  // failed native attempt's receipt is never fabricated onto the text path.
-  assert.deepEqual(event.data.usage, { inputTokens: 20, outputTokens: 1, totalTokens: 21 });
-  const replacement = f.agent.session.deriveMessages().find(m => m.source.kind === 'plugin' && m.source.plugin === 'compact');
-  assert.equal(replacement.content.some(block => block.text.startsWith('<dsh-codex-compaction-v1>')), false, 'fallback commits plain text, not a native envelope');
-  assert.equal(f.requests.length, 2, 'native attempt plus one lease fallback');
+  assert.ok(event, 'basic committed the successful native retry');
+  assert.deepEqual(event.data.usage, { inputTokens: 80, outputTokens: 20, totalTokens: 140, cacheReadTokens: 40 });
+  committedNativeReplacement(f.agent.session, f.ctx);
+  assert.ok(f.requests.every(request => request.body.input.some(item => item.type === 'compaction_trigger')));
+  assert.equal(f.resolutions, 1, 'retry reuses the original bound connection');
+  assert.equal(f.requests.length, 2, 'native attempt plus one native retry');
   assert.equal(f.requests[1].account, f.requests[0].account, 'same account across both fetches');
   assert.equal(f.hostCalls.length, 0, 'the fallback never re-walked the host route');
   const attempt = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).lastAttempt;
-  assert.equal(attempt.kind, 'fallback');
+  assert.equal(attempt.kind, 'native');
+  assert.equal(attempt.outcome, 'native');
   assert.equal(attempt.cause, 'CODEX_RUNTIME_HTTP_503');
+});
+
+test('native compaction can finish after 120s without widening ordinary request leases', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = await standardFixture(t, { timeoutMs: 120000, compactionTimeoutMs: 300000,
+    nativeReply: async ({ events }) => { await new Promise(resolve => setTimeout(resolve, 200000)); return sse(events); },
+  });
+  f.addStandardHistory(); f.enable();
+  let settled = false;
+  const result = f.engine.compactNow(f.agent, f.signal);
+  result.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.requests.length, 1);
+  t.mock.timers.tick(120001);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false, 'neither the owner lease nor the converter may cancel native compaction at 120s');
+  t.mock.timers.tick(80000);
+  assert.ok((await result).shadowedSeqs.length > 0);
+  committedNativeReplacement(f.agent.session, f.ctx);
+  const attempt = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).lastAttempt;
+  assert.equal(attempt.diagnostics.budgetMs, 300000);
+  assert.equal(attempt.diagnostics.requests, 1); assert.equal(f.resolutions, 1); assert.equal(f.hostCalls.length, 0);
+});
+
+test('complete native SSE commits history without waiting for HTTP EOF', async t => {
+  let body, cancelled = false;
+  const f = await standardFixture(t, { timeoutMs: 1000, nativeReply: ({ events }) => {
+    body = new ReadableStream({ start(controller) {
+      controller.enqueue(Buffer.from(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('')));
+      // No close: a complete protocol response must not wait for HTTP EOF.
+    }, cancel() { cancelled = true; } });
+    return new Response(body);
+  } });
+  f.addStandardHistory(); f.enable();
+  const result = await f.engine.compactNow(f.agent, f.signal);
+  assert.ok(result.shadowedSeqs.length > 0); assert.ok(result.endSeq > result.summarySeq);
+  committedNativeReplacement(f.agent.session, f.ctx);
+  assert.equal(cancelled, true); assert.equal(body.locked, false);
+  assert.equal(f.requests.length, 1); assert.equal(f.resolutions, 1); assert.equal(f.hostCalls.length, 0);
+});
+
+test('premature native EOF retries once on the same auth resolution and commits native history', async t => {
+  const f = await standardFixture(t, { nativeReply: ({ events, fetches }) => fetches === 1
+    ? new Response(`data: ${JSON.stringify(events[0])}\n\ndata: {"type":"response.compl`)
+    : sse(events) });
+  f.addStandardHistory(); f.enable();
+  const result = await f.engine.compactNow(f.agent, f.signal);
+  assert.ok(result.shadowedSeqs.length > 0);
+  committedNativeReplacement(f.agent.session, f.ctx);
+  assert.equal(f.requests.length, 2); assert.equal(f.resolutions, 1); assert.equal(f.hostCalls.length, 0);
+  assert.ok(f.requests.every(request => request.body.input.some(item => item.type === 'compaction_trigger')));
+  assert.equal(f.requests[0].account, f.requests[1].account);
+  const attempt = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).lastAttempt;
+  assert.equal(attempt.kind, 'native'); assert.equal(attempt.outcome, 'native');
+  assert.equal(attempt.cause, 'CODEX_RUNTIME_RESPONSE_STREAM');
+});
+
+test('native operation timeout preserves TIMEOUT with no retry or text fallback', async t => {
+  let body, cancelled = false;
+  const f = await standardFixture(t, { timeoutMs: 30, nativeReply: ({ events }) => {
+    body = new ReadableStream({ start(controller) {
+      controller.enqueue(Buffer.from(`data: ${JSON.stringify(events[0])}\n\n`));
+    }, cancel() { cancelled = true; } });
+    return new Response(body);
+  } });
+  f.addStandardHistory(); f.enable();
+  // Basic's public manual error wraps the original owner failure as cause.
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => error.cause?.code === 'CODEX_RUNTIME_TIMEOUT');
+  assert.equal(f.requests.length, 1); assert.equal(f.resolutions, 1); assert.equal(f.hostCalls.length, 0);
+  assert.equal(cancelled, true); assert.equal(body.locked, false);
+  assert.equal(summariesOf(f.agent.session).length, 0);
+  const attempt = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).lastAttempt;
+  assert.equal(attempt.failure, 'CODEX_RUNTIME_TIMEOUT'); assert.equal(attempt.kind, 'native');
+  assert.equal(attempt.diagnostics.phase, 'reading-sse');
+  assert.equal(attempt.diagnostics.httpStatus, 200); assert.equal(attempt.diagnostics.requests, 1);
+  assert.equal(attempt.diagnostics.lastEvent, 'compaction-item');
+  assert.ok(attempt.diagnostics.itemMs >= 0); assert.equal(attempt.diagnostics.completedMs, undefined);
+  assert.doesNotMatch(JSON.stringify(attempt.diagnostics), /standard-fixture-account|encrypted_content/);
+});
+
+test('automatic consecutive steps suppress failed native requests for 60 seconds until a committed recovery', async t => {
+  let now = 1000, failing = true;
+  const f = await standardFixture(t, { deferEngine: true, nativeReply: ({ events }) => sse(failing ? events.slice(0, 1) : events) });
+  f.ctx.codexBridge.nativeState.recovery.now = () => now;
+  f.addStandardHistory();
+  const measured = f.ctx.tokenMeter.measure(f.agent.session);
+  f.makeEngine({ auto: true, modelPolicies: [{ provider: 'openai-codex', model: ASTRA, thresholdRatio: (measured.totalTokens - 1000) / 872000, retainTokens: 0 }] });
+  f.enable(); openTurn(f.agent.session, 1);
+  const step = () => f.ctx.waterfall('agent/pre-step', { agent: f.agent, signal: f.signal }, () => 'pre-step-final');
+  await step();
+  assert.equal(f.requests.length, 2, 'one attempt plus one native retry, no text fallback');
+  assert.equal(f.resolutions, 1); assert.equal(summariesOf(f.agent.session).length, 0);
+  let status = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).recovery[0];
+  assert.equal(status.failures, 1); assert.equal(status.nextAllowedAt, 61000); assert.equal(status.coolingDown, true);
+  failing = false;
+  for (now of [1001, 30000, 60999]) await step();
+  assert.equal(f.requests.length, 2, 'consecutive automatic steps do not send new network requests inside the interval');
+  assert.equal(f.resolutions, 1, 'suppressed steps do not reacquire credentials');
+  now = 61000;
+  await step(); closeTurn(f.agent.session, 1);
+  assert.equal(f.requests.length, 3); assert.equal(f.resolutions, 2); assert.equal(f.hostCalls.length, 0);
+  committedNativeReplacement(f.agent.session, f.ctx);
+  const summary = summariesOf(f.agent.session).at(-1);
+  const replacementEvent = f.agent.session.snapshotEvents().find(event => event.type === 'user/message' && event.sourceEventSeqs?.includes(summary.seq));
+  assert.ok(replacementEvent, 'public replacement event references the committed summary');
+  const end = f.agent.session.snapshotEvents().findLast(event => event.type === 'compaction/end');
+  assert.equal(end.data.compactionId, summary.data.compactionId); assert.equal(end.data.error, undefined);
+  status = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).recovery[0];
+  assert.equal(status.failures, 0); assert.equal(status.nextAllowedAt, 0); assert.equal(status.coolingDown, false);
+  assert.equal(status.lastFailure, undefined); assert.equal(status.inFlight, false);
 });
 
 test('disabled preference keeps official basic entirely on the original path', async t => {

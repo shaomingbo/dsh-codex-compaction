@@ -158,8 +158,8 @@ test('envelope-shaped garbage on a checkpoint source fails closed', async t => {
   assert.throws(() => f.ctx.codexBridge.readCheckpoint(garbage), error => /CODEX|CHECKPOINT|JSON/.test(error.code ?? error.message));
 });
 
-test('recoverable native failure falls back once, inside the same owner lease', async t => {
-  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA], fail: 'CODEX_RUNTIME_HTTP_503', failMode: 'once' } });
+test('recoverable availability failure falls back once, inside the same owner lease', async t => {
+  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA], fail: 'CODEX_RUNTIME_NOT_READY', failMode: 'once' } });
   f.enable();
   const assembler = await collect(f.ctx.llm.stream(compactRequest([user('work'), instruction()])));
   assert.equal(f.fake.calls.length, 2, 'one native attempt plus one text fallback');
@@ -173,11 +173,11 @@ test('recoverable native failure falls back once, inside the same owner lease', 
   assert.equal(assembler.blocks()[0].text, 'fixture continued');
   const recorded = f.ctx.codexBridge.nativePreferenceStatus('s1').lastAttempt;
   assert.equal(recorded.kind, 'fallback');
-  assert.equal(recorded.cause, 'CODEX_RUNTIME_HTTP_503');
+  assert.equal(recorded.cause, 'CODEX_RUNTIME_NOT_READY');
 });
 
 test('a connection rotated between attempts can never substitute for the fallback account', async t => {
-  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA], fail: 'CODEX_RUNTIME_HTTP_503', failMode: 'once', rotateIdentityOnFailure: 'account-b' } });
+  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA], fail: 'CODEX_RUNTIME_NOT_READY', failMode: 'once', rotateIdentityOnFailure: 'account-b' } });
   f.enable();
   const assembler = await collect(f.ctx.llm.stream(compactRequest([user('work'), instruction()])));
   assert.equal(f.fake.calls[0].identity, 'fixture-owner-connection', 'native attempt started on account A');
@@ -194,7 +194,8 @@ test('client HTTP and auth failures no longer count as recoverable', () => {
   assert.equal(isRecoverableNativeFailure(Object.assign(new Error('x'), { code: 'CODEX_RUNTIME_HTTP_ERROR' })), false);
   assert.equal(isRecoverableNativeFailure(Object.assign(new Error('x'), { code: 'CODEX_RUNTIME_HTTP_503' })), true);
   assert.equal(isRecoverableNativeFailure(Object.assign(new Error('x'), { code: 'CODEX_RUNTIME_NETWORK' })), true);
-  assert.equal(isRecoverableNativeFailure(Object.assign(new Error('x'), { code: 'CODEX_RUNTIME_TIMEOUT' })), true);
+  assert.equal(isRecoverableNativeFailure(Object.assign(new Error('x'), { code: 'CODEX_RUNTIME_TIMEOUT' })), false);
+  assert.equal(isRecoverableNativeFailure(Object.assign(new Error('x'), { code: 'CODEX_RUNTIME_RESPONSE_PROTOCOL' })), false);
 });
 
 test('identity mismatch, bad checkpoints and cancellation never fall back', async t => {
@@ -221,7 +222,7 @@ test('identity mismatch, bad checkpoints and cancellation never fall back', asyn
 });
 
 test('carrier histories never fall back to text even on recoverable native failure', async t => {
-  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA], fail: 'CODEX_RUNTIME_HTTP_503', failMode: 'once' } });
+  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA], fail: 'CODEX_RUNTIME_HTTP_503', failMode: 'always' } });
   f.enable();
   const seeded = await fixture(t, { runtimeOptions: { customModels: [ASTRA] } });
   seeded.enable();

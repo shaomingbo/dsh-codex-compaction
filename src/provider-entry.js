@@ -27,6 +27,8 @@ export function apply(ctx, config = {}) {
     profileNative: config.nativeCompaction === true,
     recoverPreference: commandLogPreferenceRecovery(ctx),
   });
+  ctx.on('session/event', (session, event) => bridge.nativeState.recovery.observe(session, event));
+  ctx.on('dispose', () => bridge.nativeState.recovery.clear());
   ctx.inject(['codexRuntime', 'llm'], ownerCtx => {
     const runtime = requireRuntime(ownerCtx.codexRuntime);
     currentRuntime = runtime;

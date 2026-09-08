@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 
 export const PACKAGE_NAME = 'dsh-codex-compaction';
 export const SUPPORTED_DSH_VERSION = '0.1.2-rc.1';
-export const DEFAULT_SOURCE = 'github:shaomingbo/dsh-codex-compaction#v0.3.0';
+export const DEFAULT_SOURCE = 'github:shaomingbo/dsh-codex-compaction#v0.3.1';
 const CLI_GUIDANCE = `Install @deepseek-ai/dsh@${SUPPORTED_DSH_VERSION} and pnpm, put its dsh executable on PATH, then check dsh --version. No manifest fallback is available.`;
 
 export function validateProfile(profile) {

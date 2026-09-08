@@ -6,6 +6,28 @@ caller receives OAuth values, a credential reference, arbitrary authenticated fe
 or access to another plugin's grant. Existing `openai-codex` routing/login remains
 untouched.
 
+## 0.3.1 + 5.1.2 Native-only compaction budget
+
+The live-accepted pair uses `purpose: 'compaction'`, an optional extension selecting the
+owner's separately bounded compaction lease. The account composition grants 300000ms;
+ordinary opens remain 120000ms. Older owners ignoring purpose retain their prior deadline.
+`budgetMs` in the optional diagnostics reports the actual selected lease budget. No caller
+supplies an arbitrary duration, and creating providers/retrying/falling back cannot renew
+the lease. Release-tag publication is separate from this acceptance; the maintainer has also
+rerun the frozen production candidate's 498-test regression (see validation).
+
+Only native `compactOnLease` uses the 300000ms pi-converter idle allowance, because the
+native provider emits no pi output until completion. Ordinary replay/text converters stay
+at 120000ms. The original owner lease remains authoritative over the entire recovery
+sequence. The existing one-extra-request budget and 60-second failure suppression do not
+change. The accepted 157372ms real run used one request with budget 300000ms and produced an
+official history replacement; it does not establish a production latency SLA or fix all timeouts.
+
+`operation.diagnostics()` exposes fixed enums/counts/timings only; its detached `eventCounts`
+distinguish reasoning items, message items, compaction items and text/summary activity.
+Unknown event names/types stay `other` (or fixed item-other categories), never raw strings.
+Samples do not include ids, bodies, account data, credentials or opaque native state.
+
 ## Host capability
 
 - `protocol: 'codex-runtime/v1'`
@@ -28,7 +50,7 @@ untouched.
   `MODEL_METADATA`). Bounded by the runtime deadline, caller cancellation and
   disposal; it never resolves authentication, performs network I/O or leaks
   configured values.
-- `open({ model, signal })` → authenticated operation handle below; the owner
+- `open({ model, signal, purpose? })` → authenticated operation handle below; the owner
   resolves/refreshes its existing ChatGPT connection once. Missing login fails with
   guidance to the existing Accounts & Usage UI. No login is initiated automatically.
 - `encodeCheckpoint(record)`, `decodeCheckpoint(text, expected?)`,
@@ -55,7 +77,14 @@ untouched.
   upstream native usage after drain, or `{kind:'unavailable'}` — never the SDK's
   default zero-filled usage. Field presence is preserved; same-handle concurrent
   execution is forbidden.
-- `close()` cancels/releases the operation, idempotently.
+- Optional `diagnostics()` returns a detached fixed-field snapshot: `version`, `phase`,
+  `budgetMs`, `elapsedMs`, `metadataMs`, `boundMs`, `requestMs`, `headersMs`, `firstByteMs`,
+  `lastByteMs`, `lastEventMs`, `itemMs`, `completedMs`, `httpStatus`, `requests`,
+  `requestBytes`, `responseBytes`, `chunks`, `events`, `lastEvent` and `eventCounts`.
+  Stage-specific fields may be absent. Counts/timings are nonnegative integers; phase/event
+  values are owner-selected enums. Request counts cover the lease; response counters cover
+  the latest request. No raw event name, id, URL, body or credential is returned.
+- `close()` cancels/releases the operation, idempotently; it freezes the diagnostic clock.
 
 The provider owns native message/tool conversion, exact placeholder expansion, the
 fixed endpoint, attribution/header forwarding rules, Codex V2 compact and normal
@@ -72,6 +101,37 @@ from the owner's trusted facts or pinned catalog; allowlist streaming options;
 force the fixed Codex origin and non-redirecting SSE. Validate every replay
 checkpoint against the immutable binding before transport; consume each
 placeholder exactly once. Never silently degrade malformed native state.
+
+## 5.1.2 completion and failure correction
+
+The protocol and checkpoint remain v1; optional purpose selection and diagnostics are described
+above. The native owner finishes at the valid `response.completed` (or compatible `response.done`)
+event with one compaction item, cancels/releases the reader and ignores subsequent bytes
+regardless of chunk boundaries. Before completion, invalid/duplicate items, malformed complete
+data and resource limits still fail. Premature EOF, including a truncated JSON/SSE/UTF-8 frame,
+or failed socket read maps to recoverable `CODEX_RUNTIME_RESPONSE_STREAM`; malformed native
+responses map to non-retryable `CODEX_RUNTIME_RESPONSE_PROTOCOL`.
+
+The first lease stop cause remains TIMEOUT, CANCELLED, CLOSED or DISPOSED on subsequent
+provider/auth/stream use. Neither a retry nor fallback resets the original owner deadline;
+TIMEOUT does not allow fallback. The consumer alone owns its one shared recovery request,
+so transport/SDK retries are not added underneath it. In-flight account identity remains fixed.
+Old compatible runtime versions can still be used, but do not acquire these new completion
+and error-classification guarantees merely by updating the compaction consumer.
+
+The 0.3.1 consumer spends at most one extra request in the same lease/account/model/endpoint:
+network/5xx/stream failures prefer a native retry after a cancellable 200ms delay; other
+allowlisted availability failures may use text fallback. They cannot stack. Protocol/identity
+errors, cancellation and expired leases do not trigger recovery; carrier histories never
+fall back to text. This is plugin recovery policy, not official Codex Native-to-text fallback.
+Terminal failures suppress new taken-over requests for 60 seconds per session/provider/model;
+ordinary generation is not paused. Only matching official replacement and clean end clear
+failure state. This bounded process-local state resets on restart.
+
+Known non-blocking limitation: cancellation can display `CODEX_RUNTIME_ERROR` in compaction
+status despite the owner's first-stop preservation. A refresh may cancel a pending manual
+command; tab switching alone is not established as a cause. Neither these changes nor the
+longer native budget promise uninterrupted progress at hard context limits.
 
 ## Records and lifetime
 

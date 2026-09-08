@@ -13,7 +13,7 @@ const safeCode = code => typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.te
 const codeError = error => new LlmError(`Codex owner-bound operation failed (${safeCode(error?.code)}); check Accounts & Usage and the native capability version.`, safeCode(error?.code));
 // PiAi preserves the owner's errorMessage but reclassifies its code. Only recover
 // exact owner-generated categories; never forward arbitrary SDK diagnostic text.
-const ownerFailureCode = text => typeof text === 'string' && /^CODEX_RUNTIME_(?:HTTP_[1-5]\d{2}|HTTP_ERROR|NETWORK|REQUEST_PREPARE|RESPONSE_TYPE|RESPONSE_STREAM|REQUEST_FAILED|TIMEOUT|CANCELLED)$/.exec(text)?.[0] === text ? text : undefined;
+const ownerFailureCode = text => typeof text === 'string' && /^CODEX_RUNTIME_(?:HTTP_[1-5]\d{2}|HTTP_ERROR|NETWORK|REQUEST_PREPARE|RESPONSE_TYPE|RESPONSE_STREAM|RESPONSE_PROTOCOL|REQUEST_FAILED|TIMEOUT|CANCELLED|DISPOSED|CLOSED|NOT_READY|NOT_CONFIGURED)$/.exec(text)?.[0] === text ? text : undefined;
 
 // Both the legacy A experiment and the new main path commit the owner codec's
 // versioned envelope as a dedicated text block on a compact-checkpoint
@@ -115,10 +115,40 @@ async function* ownerReplayStream(adapter, options) {
   finally { lease.close(); }
 }
 
+const DIAGNOSTIC_EVENTS = ['created', 'in-progress', 'queued', 'compaction-added', 'compaction-item', 'completed', 'failed', 'other',
+  'reasoning-added', 'reasoning-done', 'message-added', 'message-done', 'item-added-other', 'item-done-other',
+  'content-added', 'content-done', 'output-text-delta', 'output-text-done', 'reasoning-delta', 'reasoning-done-text',
+  'reasoning-summary-added', 'reasoning-summary-done', 'reasoning-summary-delta', 'reasoning-summary-text-done'];
+
+/** Optional diagnostic extension: fixed enums and numbers only; older owners remain valid. */
+export function operationDiagnostic(lease, error) {
+  try {
+    const raw = lease?.operation?.diagnostics?.() ?? error?.diagnostics;
+    const phase = raw?.phase;
+    if (!raw || raw.version !== 1 || !['model-metadata', 'account-binding', 'bound', 'request-prepare', 'waiting-headers', 'waiting-body', 'reading-sse', 'completed'].includes(phase)) return;
+    const data = { version: 1, phase };
+    for (const key of ['budgetMs', 'elapsedMs', 'metadataMs', 'boundMs', 'requests', 'requestMs', 'requestBytes', 'headersMs', 'httpStatus', 'firstByteMs', 'lastByteMs', 'responseBytes', 'chunks', 'events', 'lastEventMs', 'itemMs', 'completedMs']) {
+      const value = raw[key];
+      if (Number.isSafeInteger(value) && value >= 0) data[key] = value;
+    }
+    const lastEvent = raw.lastEvent;
+    if (DIAGNOSTIC_EVENTS.includes(lastEvent)) data.lastEvent = lastEvent;
+    const counts = raw.eventCounts;
+    if (counts && typeof counts === 'object' && !Array.isArray(counts)) {
+      data.eventCounts = {};
+      for (const key of DIAGNOSTIC_EVENTS) {
+        const value = counts[key];
+        if (Number.isSafeInteger(value) && value >= 0) data.eventCounts[key] = value;
+      }
+    }
+    return data;
+  } catch { /* Diagnostic failure must not affect request/error semantics. */ }
+}
+
 /** Open and validate one owner operation lease; raw coded failures propagate. */
-async function openLease(adapter, { model, signal }) {
+async function openLease(adapter, { model, signal, purpose }) {
   const runtime = adapter.runtime();
-  const operation = await runtime.open({ model, signal });
+  const operation = await runtime.open({ model, signal, ...(purpose === 'compaction' ? { purpose } : {}) });
   assertOperation(operation, model);
   const close = () => closeOperation(operation);
   return Object.freeze({ operation, binding: operation.binding, close });
@@ -141,7 +171,7 @@ async function compactOnLease(adapter, lease, { model, messages, system, tools, 
   const assembler = new BlockAssembler();
   const request = { provider: NATIVE_PROVIDER, model, messages: history.messages,
     ...(system === undefined ? {} : { system }), ...(tools === undefined ? {} : { tools }), signal };
-  for await (const chunk of adapter.converter(provider).stream(request)) assembler.push(chunk);
+  for await (const chunk of adapter.converter(provider, { purpose: 'compaction' }).stream(request)) assembler.push(chunk);
   signal?.throwIfAborted();
   if (assembler.finish.kind !== 'stop') throw failure(ownerFailureCode(assembler.finish.failure?.message) ?? 'CODEX_NATIVE_FAILED', 'Owner-bound native compaction did not complete.');
   const blocks = assembler.blocks();
@@ -165,7 +195,7 @@ async function compactOnLease(adapter, lease, { model, messages, system, tools, 
  */
 export async function ownerCompact(adapter, request) {
   assertTextHistory(request.messages); request.signal?.throwIfAborted();
-  const lease = await openLease(adapter, request);
+  const lease = await openLease(adapter, { ...request, purpose: 'compaction' });
   try {
     return await compactOnLease(adapter, lease, request);
   } finally { lease.close(); }
@@ -181,9 +211,13 @@ export class OwnerBoundCodexAdapter extends LlmAdapter {
   route(provider) { if (provider !== ROUTE) throw new LlmError('This adapter does not own that provider route.', 'NO_ADAPTER'); }
   providerInfo(provider) { this.route(provider); return { id: ROUTE, name: DISPLAY_NAME }; }
   providerRetryPolicy(provider) { this.route(provider); return this.retry; }
-  converter(provider) {
+  converter(provider, { purpose } = {}) {
+    // Native output appears only after the owner finishes the entire compact
+    // operation. Do not let a shorter converter idle timer preempt that lease.
+    // Ordinary replay/text streams retain their original 120-second idle cap.
+    const streamIdleTimeoutMs = purpose === 'compaction' ? 300000 : 120000;
     const profiles = new Map([[NATIVE_PROVIDER, { provider: NATIVE_PROVIDER, displayName: DISPLAY_NAME,
-      piProvider: provider, configuredMaxTokens: new Map(), retryPolicy: this.retry, streamIdleTimeoutMs: 120000 }]]);
+      piProvider: provider, configuredMaxTokens: new Map(), retryPolicy: this.retry, streamIdleTimeoutMs }]]);
     return new PiAiAdapter({ profiles: () => profiles, resolveApiKey: async () => undefined,
       auth: { credentials: EMPTY_CREDENTIALS, authContext: NO_AMBIENT },
       onReplayDegrade: () => { throw failure('CODEX_NATIVE_REPLAY_INCOMPATIBLE', 'Native reasoning metadata requires its compatible reader.'); } });
@@ -229,7 +263,7 @@ export class OwnerBoundCodexAdapter extends LlmAdapter {
   }
   /** Internal seam entry: open one owner lease for unified native+fallback control. */
   seamLease(request) {
-    return openLease(this, request);
+    return openLease(this, { ...request, purpose: 'compaction' });
   }
   /** Internal seam entry: native compact on an existing lease. */
   seamCompactOnLease(lease, request) {

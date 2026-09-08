@@ -9,11 +9,20 @@ export const inject = ['commands', 'agentPresets', 'codexBridge'];
 const attemptText = attempt => {
   if (!attempt) return 'none yet';
   const when = new Date(attempt.at).toISOString();
+  if (attempt.outcome === 'running' || attempt.outcome === 'retrying') return `${attempt.kind} ${attempt.outcome} at ${when} (model ${attempt.model}); no completed summary yet`;
+  if (attempt.outcome === 'failed') return `${attempt.kind} attempt FAILED at ${when} (native cause ${attempt.cause}; final ${attempt.failure ?? attempt.cause}; model ${attempt.model})`;
   if (attempt.kind === 'native' && attempt.outcome === 'native') return `native summarization streamed at ${when} (model ${attempt.model}; durable only after basic commits)`;
-  if (attempt.kind === 'fallback') return `TEXT FALLBACK at ${when} after recoverable native failure ${attempt.cause} (model ${attempt.model})`;
-  if (attempt.kind === 'native') return `native attempt FAILED at ${when} (${attempt.cause}); no fallback`;
+  if (attempt.kind === 'fallback') return `TEXT FALLBACK output completed at ${when} after recoverable native failure ${attempt.cause} (model ${attempt.model}; history replacement still requires basic commit)`;
   return `not taken over at ${when} (${attempt.reason}; model ${attempt.model})`;
 };
+
+const diagnosticText = status => status?.lastAttempt?.diagnostics
+  ? `Diagnostic v1 (timings in ms from lease start): ${JSON.stringify(status.lastAttempt.diagnostics)}`
+  : 'Diagnostic v1: no phase sample yet.';
+
+const recoveryText = status => (status?.recovery ?? []).map(entry =>
+  `Recovery ${entry.provider}/${entry.model}: ${entry.failures} consecutive failures; ${entry.inFlight ? 'request in flight' : entry.coolingDown ? `deferred until ${new Date(entry.nextAllowedAt).toISOString()}` : 'next official trigger may attempt'}${entry.lastFailure ? `; last failure ${entry.lastFailure}` : ''}.`
+).join('\n') || 'Recovery: no tracked failures. State is process-local; ordinary task requests are not paused.';
 
 /**
  * Correlate the latest compaction summary with its observed logical terminal
@@ -97,7 +106,7 @@ export function apply(ctx, config = {}) {
           : `Native applicability for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}). Requests stay on the original path.`)
         : 'No routed model yet; native applicability unknown until a request selects a model.';
       const history = `Last summarization attempt: ${attemptText(status.lastAttempt)}.`;
-      return { kind: 'success', text: [`Native Codex compaction preference.`, preference, readiness, history,
+      return { kind: 'success', text: [`Native Codex compaction preference.`, preference, readiness, history, recoveryText(status), diagnosticText(status),
         'Profile enablement is a reviewed rollout step; OFF only stops new native creation, existing native state stays readable.'].join('\n') };
     },
   }));
@@ -128,7 +137,7 @@ export function apply(ctx, config = {}) {
             `Last attempt: ${attemptText(status.lastAttempt)}.`].join('\n')
           : 'Native preference: no live session.';
         const committed = session ? `Observed compaction result: ${committedText(session)}.` : 'Observed compaction result: no live session.';
-        return { kind: 'success', text: [auto, native, committed,
+        return { kind: 'success', text: [auto, native, recoveryText(status), diagnosticText(status), committed,
           'A streamed native summary counts only after official basic replaces history in the session log; this status observes that logical replacement and does not independently confirm host-owned disk persistence.'].join('\n') };
       }
       return { kind: 'error', text: 'No compaction engine serves this session. Start a standard openai-codex session to see basic automatic compaction and native readiness; the legacy structured preset is compatibility-only.' };
