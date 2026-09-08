@@ -2,7 +2,11 @@
 
 [English](README.md)
 
-`0.3.1` 包含**已通过真实验收的恢复修复**，配套 `dsh-token-usage` `5.1.2`。
+**`0.3.2` + 账户 owner `5.1.3`**，分离普通请求 setup/总期限并延长重放/文本 idle 容限。
+完整修复必须成对更新。tag 身份及 tag 安装结果记录在 release；当前 host 验收单独记录。
+此处不宣称 GitHub 发布或当前 host 验收已完成。
+
+本配对保留 `0.3.1` + `5.1.2` 的历史恢复修正。
 官方 `BasicCompactionEngine` 仍是唯一的主/自动压缩后端，本包在其上增加一个可选的、
 由账户能力持有的**原生摘要/重放接缝**（标准 `openai-codex` 会话），并保留 legacy
 结构化 reader。不改 DSH core，不重复登录。请使用下列匹配的固定 tag；发布身份与 tag
@@ -12,16 +16,16 @@
 ## 安装（tag 存在后）
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2
 ```
 
 无参数等同 `install`；默认 profile 为 `web`。其他命令：
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 --help
 ```
 
 - 安装器要求 PATH 上存在精确测试过的 `dsh` CLI **`0.1.2-rc.1`**，所有变更都委托给公开
@@ -31,8 +35,8 @@ npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 --help
 - **`dsh` 缺失、版本不符或 plugin 命令失败时，安装器带指引地失败关闭。** 没有直接改 manifest
   的 fallback。请用 `dsh --version` 核对；历史上的 PATH CLI `0.1.2-alpha.3` 是另一个更旧的
   构建版本，会被拒绝。
-- 配套账户包：同一发布系列的 **`dsh-token-usage` `5.1.2`**
-  （发布后使用 `github:shaomingbo/dsh-token-usage#v5.1.2`）。它是能力配套包，不是 registry 依赖：
+- 配套账户包：同一发布系列的 **`dsh-token-usage` `5.1.3`**
+  （发布后使用 `github:shaomingbo/dsh-token-usage#v5.1.3`）。它是能力配套包，不是 registry 依赖：
   本包从不猜测账户版本，而是在运行时预检 `codex-runtime/v1` 协议与认证 owner。相邻/更旧
   的 DSH 版本为不支持或未知；只声明 CI 矩阵实际验证过的范围。
 - Bundle 变更需要用户自行重启对应 profile（Web GUI 需硬刷新）。任何脚本都不会启动、
@@ -69,9 +73,29 @@ npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 --help
    旧日志绝不重写，旧 reader 全部保留。卸载整个包会同时移除 DSH bridge；请为原生历史
    保留匹配的 reader。
 
-## 0.3.1 恢复修正
+## 0.3.2 请求期限修正（配套 owner 5.1.3）
 
-Native 压缩租约/转换器最多 300 秒，普通请求租约及重放/文本转换器仍为 120 秒。
+- 普通 owner `open` 使用 **1800000ms 总预算**、**120000ms setup 预算**。
+  重放/文本转换器复用公开 DSH PiAiAdapter 的 **300000ms idle watchdog**，不另建 SSE
+  监控器。准备期限、总时长与流静默是不同边界。
+- `purpose: 'compaction'` 保持 **300000ms 总预算**（含 setup），不施加额外较短的 setup
+  限制；其转换器 idle 仍为 **300000ms**。重试和同租约 fallback 不续期。
+- owner factory 的 `timeoutMs` 仍表示总预算，显式短调用值保持原语义；新增
+  `setupTimeoutMs` 默认 `min(timeoutMs, 120000)`，`compactionTimeoutMs` 默认
+  `min(timeoutMs, 300000)`。这些是 owner factory 选项，不是 `open` 或本插件提供的任意期限覆盖。
+- 既有诊断 `budgetMs` 仍为选中的总预算；新增可选 `totalBudgetMs`、`setupBudgetMs`、
+  `timeoutBudgetMs`、`timeoutKind: 'setup' | 'total'`，只披露固定期限事实。
+  owner 超时仍为 `CODEX_RUNTIME_TIMEOUT`；公开 Pi idle watchdog 仍明确为 **`TIMEOUT`**。
+  不暴露凭据或 body 文本。
+- 旧 owner 及缺少新诊断字段的情况保持读取兼容，但仍使用旧请求预算；单独更新 consumer
+  不能解除 owner 旧总期限，**完整修复必须成对更新**。
+
+tag 身份及 tag 安装结果记录在 release；当前 host 验收单独记录，不由本地测试推定。
+下面历史验收不证明本次普通请求期限策略。
+
+## 历史 0.3.1 恢复修正
+
+`0.3.1` + `5.1.2` 当时的 Native 压缩租约/转换器最多 300 秒，普通请求租约及重放/文本转换器为 120 秒。
 固定字段诊断包含阶段、耗时、字节/请求计数、`budgetMs` 与固定枚举 `eventCounts`，
 不含原始内容或标识。详见[能力契约](docs/CODEX_RUNTIME_V1.md)。
 

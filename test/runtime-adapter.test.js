@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction';
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import { OwnerBoundCodexAdapter, isNativeCarrier } from '../src/runtime-adapter.js';
 import { ROUTE } from '../src/constants.js';
 import { fakeRuntime } from './helpers/fake-runtime.js';
@@ -23,6 +25,55 @@ test('generic adapter delegates native compaction without owning credentials or 
   assert.equal(f.opened, 1);
   assert.equal(f.closed, 1);
 });
+
+for (const purpose of ['stream', 'compaction']) {
+  test(`${purpose} uses the public Pi idle watchdog at 300000ms, not 120000ms`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fakeRuntime();
+    const started = Promise.withResolvers();
+    const runtime = { ...f.runtime, async open(options) {
+      const operation = await f.runtime.open(options);
+      return { ...operation, provider(request) {
+        const provider = operation.provider(request);
+        return { ...provider, streamSimple(_model, _context, options) {
+          const output = createAssistantMessageEventStream();
+          // Resolve the SDK result as well as its iterator so cancellation can drain.
+          options.signal.addEventListener('abort', () => output.end({}), { once: true });
+          started.resolve(options.signal);
+          return output;
+        } };
+      } };
+    } };
+    const adapter = new OwnerBoundCodexAdapter(() => runtime);
+    const controller = new AbortController();
+    const request = { ...input([user('Wait for owner output.')]), signal: controller.signal };
+    let settled = false;
+    const pending = (purpose === 'compaction' ? adapter.compact(request) : (async () => {
+      for await (const _ of adapter.stream(request)) {}
+    })()).then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+    try {
+      const signal = await started.promise;
+      await nextTurn();
+      t.mock.timers.tick(120000);
+      await nextTurn();
+      assert.equal(signal.aborted, false, 'ordinary and native converters must survive the former 120s cap');
+      assert.equal(settled, false);
+      t.mock.timers.tick(179999);
+      await nextTurn();
+      assert.equal(signal.aborted, false);
+      assert.equal(settled, false, 'idle timeout must not fire before 300000ms');
+      t.mock.timers.tick(1);
+      const result = await pending;
+      assert.equal(signal.aborted, true);
+      assert.equal(result.error?.code, 'TIMEOUT', 'Pi idle timeout must not become an owner CODEX_RUNTIME_TIMEOUT');
+      assert.equal(f.opened, 1);
+      assert.equal(f.closed, 1);
+    } finally {
+      controller.abort();
+      await pending;
+    }
+  });
+}
 
 test('observed native receipt preserves explicit cache zero and ignores SDK placeholders', async () => {
   const f = fakeRuntime({ receipt: { kind: 'observed', usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15, cacheReadTokens: 0 } } });

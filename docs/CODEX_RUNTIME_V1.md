@@ -6,7 +6,40 @@ caller receives OAuth values, a credential reference, arbitrary authenticated fe
 or access to another plugin's grant. Existing `openai-codex` routing/login remains
 untouched.
 
-## 0.3.1 + 5.1.2 Native-only compaction budget
+## 0.3.2 + 5.1.3 setup, total and idle budgets
+
+The account composition selects **1800000ms total** for an ordinary `open` and
+**120000ms setup** for metadata/account binding. The total deadline begins at open and
+includes setup; setup is not a second full request budget. An open with
+`purpose: 'compaction'` retains **300000ms total**, including setup, and does not receive a
+separate shorter setup deadline. Provider creation, retry and fallback cannot renew a lease.
+
+At the owner runtime factory, `timeoutMs` remains the ordinary total-budget option; explicit
+short-call values retain their meaning. New `setupTimeoutMs` defaults to
+`min(timeoutMs, 120000)`; `compactionTimeoutMs` defaults to `min(timeoutMs, 300000)`.
+These factory settings are not added to the consumer-facing `open` arguments. The production
+composition's ordinary total is 1800000ms; compaction remains bounded independently at 300000ms.
+
+The companion uses the existing public DSH PiAiAdapter **300000ms idle watchdog** for both
+ordinary replay/text and native compaction conversion. It adds no SSE monitor. This is a
+stream-inactivity limit, not the owner's setup or total budget. Owner deadline failures keep
+`CODEX_RUNTIME_TIMEOUT`; the Pi watchdog keeps **`TIMEOUT`** with a fixed idle-timeout
+message, not an owner timeout category or arbitrary upstream diagnostic text.
+
+The optional v1 diagnostic extension adds nonnegative safe integers `totalBudgetMs`,
+`setupBudgetMs`, `timeoutBudgetMs` and strict `timeoutKind: 'setup' | 'total'`. Existing
+`budgetMs` still means the actual selected **total** budget; `timeoutBudgetMs` identifies
+the budget that expired, with `timeoutKind` distinguishing setup from total. Fields can be
+absent (including setup fields on compaction). Unknown fields/enum values and invalid numbers
+are not forwarded; bodies, credentials and arbitrary strings remain excluded.
+
+Old owners/readers and absent optional fields remain compatible, but an older owner does not
+acquire the new total budget merely by updating this consumer. The complete correction requires
+**0.3.2 + 5.1.3 together**. Tag identity and tag-installation results are recorded in the
+release; current-host acceptance is recorded separately. Neither publication nor live acceptance
+is claimed complete here; the following evidence belongs to the historical pair only.
+
+## Historical 0.3.1 + 5.1.2 Native-only compaction budget
 
 The live-accepted pair uses `purpose: 'compaction'`, an optional extension selecting the
 owner's separately bounded compaction lease. The account composition grants 300000ms;
@@ -81,8 +114,10 @@ Samples do not include ids, bodies, account data, credentials or opaque native s
   `budgetMs`, `elapsedMs`, `metadataMs`, `boundMs`, `requestMs`, `headersMs`, `firstByteMs`,
   `lastByteMs`, `lastEventMs`, `itemMs`, `completedMs`, `httpStatus`, `requests`,
   `requestBytes`, `responseBytes`, `chunks`, `events`, `lastEvent` and `eventCounts`.
-  Stage-specific fields may be absent. Counts/timings are nonnegative integers; phase/event
-  values are owner-selected enums. Request counts cover the lease; response counters cover
+  The owner 5.1.3 extension optionally adds `totalBudgetMs`, `setupBudgetMs`,
+  `timeoutBudgetMs` and `timeoutKind` (`setup` or `total`); `budgetMs` remains the total budget.
+  Stage-specific fields may be absent. The consumer accepts only nonnegative safe integers
+  for counts/timings and fixed owner-selected enums for phase/event/timeout kind. Request counts cover the lease; response counters cover
   the latest request. No raw event name, id, URL, body or credential is returned.
 - `close()` cancels/releases the operation, idempotently; it freezes the diagnostic clock.
 

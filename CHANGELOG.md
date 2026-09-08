@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.2
+
+Companion: `dsh-token-usage` `5.1.3`. Tag identity and tag-installation results are recorded
+in the release; current-host acceptance is recorded separately. This entry does not claim
+publication or live acceptance is complete; the `0.3.1` evidence below remains historical.
+
+- Ordinary owner opens select 1800000ms total and 120000ms setup budgets. The companion
+  replay/text converter now uses the public PiAiAdapter idle watchdog at 300000ms instead
+  of 120000ms; no additional SSE monitor is introduced.
+- Compaction-purpose opens retain a 300000ms total deadline including setup, without a
+  separate shorter setup deadline. Native converter idle remains 300000ms. Recovery never
+  renews the original lease.
+- Owner factory `timeoutMs` retains total-budget and explicit short-call semantics.
+  `setupTimeoutMs` defaults to `min(timeoutMs, 120000)` and `compactionTimeoutMs` to
+  `min(timeoutMs, 300000)`; callers cannot override durations through `open`.
+- Diagnostic `budgetMs` remains the selected total budget. The consumer allowlists optional
+  nonnegative safe integers `totalBudgetMs`, `setupBudgetMs`, `timeoutBudgetMs` and the strict
+  `timeoutKind` enum `setup`/`total`, never credentials or body text. Owner deadline failures
+  retain `CODEX_RUNTIME_TIMEOUT`; public Pi idle failures retain `TIMEOUT`.
+- Old owners/readers remain compatible, but do not acquire new owner request budgets from
+  a consumer-only update. Both companion packages are required for the complete correction.
+
 ## 0.3.1
 
 Paired with `dsh-token-usage` `5.1.2`. The recovery fix has passed an authorized real

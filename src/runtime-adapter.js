@@ -10,7 +10,16 @@ const EMPTY_CREDENTIALS = Object.freeze({ read: async () => undefined, list: asy
   delete: async () => { throw failure('CODEX_BRIDGE_NO_CREDENTIALS', 'The compaction bridge does not own credentials.'); } });
 const NO_AMBIENT = Object.freeze({ env: async () => undefined, fileExists: async () => false });
 const safeCode = code => typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : 'CODEX_RUNTIME_ERROR';
-const codeError = error => new LlmError(`Codex owner-bound operation failed (${safeCode(error?.code)}); check Accounts & Usage and the native capability version.`, safeCode(error?.code));
+const codeError = error => {
+  // Only the published converter's fixed timeout shape may cross this seam.
+  // Never forward arbitrary SDK text or a cause that may carry request data.
+  const idle = error instanceof LlmError && error.code === 'TIMEOUT'
+    ? /^pi-ai stream idle timeout after ([1-9][0-9]{0,9})ms$/.exec(error.message) : undefined;
+  if (idle && Number(idle[1]) <= 2147483647) {
+    return new LlmError(`Codex stream idle timeout after ${idle[1]}ms without model output.`, 'TIMEOUT');
+  }
+  return new LlmError(`Codex owner-bound operation failed (${safeCode(error?.code)}); check Accounts & Usage and the native capability version.`, safeCode(error?.code));
+};
 // PiAi preserves the owner's errorMessage but reclassifies its code. Only recover
 // exact owner-generated categories; never forward arbitrary SDK diagnostic text.
 const ownerFailureCode = text => typeof text === 'string' && /^CODEX_RUNTIME_(?:HTTP_[1-5]\d{2}|HTTP_ERROR|NETWORK|REQUEST_PREPARE|RESPONSE_TYPE|RESPONSE_STREAM|RESPONSE_PROTOCOL|REQUEST_FAILED|TIMEOUT|CANCELLED|DISPOSED|CLOSED|NOT_READY|NOT_CONFIGURED)$/.exec(text)?.[0] === text ? text : undefined;
@@ -127,10 +136,12 @@ export function operationDiagnostic(lease, error) {
     const phase = raw?.phase;
     if (!raw || raw.version !== 1 || !['model-metadata', 'account-binding', 'bound', 'request-prepare', 'waiting-headers', 'waiting-body', 'reading-sse', 'completed'].includes(phase)) return;
     const data = { version: 1, phase };
-    for (const key of ['budgetMs', 'elapsedMs', 'metadataMs', 'boundMs', 'requests', 'requestMs', 'requestBytes', 'headersMs', 'httpStatus', 'firstByteMs', 'lastByteMs', 'responseBytes', 'chunks', 'events', 'lastEventMs', 'itemMs', 'completedMs']) {
+    for (const key of ['budgetMs', 'setupBudgetMs', 'totalBudgetMs', 'timeoutBudgetMs', 'elapsedMs', 'metadataMs', 'boundMs', 'requests', 'requestMs', 'requestBytes', 'headersMs', 'httpStatus', 'firstByteMs', 'lastByteMs', 'responseBytes', 'chunks', 'events', 'lastEventMs', 'itemMs', 'completedMs']) {
       const value = raw[key];
       if (Number.isSafeInteger(value) && value >= 0) data[key] = value;
     }
+    const timeoutKind = raw.timeoutKind;
+    if (['setup', 'total'].includes(timeoutKind)) data.timeoutKind = timeoutKind;
     const lastEvent = raw.lastEvent;
     if (DIAGNOSTIC_EVENTS.includes(lastEvent)) data.lastEvent = lastEvent;
     const counts = raw.eventCounts;
@@ -171,7 +182,7 @@ async function compactOnLease(adapter, lease, { model, messages, system, tools, 
   const assembler = new BlockAssembler();
   const request = { provider: NATIVE_PROVIDER, model, messages: history.messages,
     ...(system === undefined ? {} : { system }), ...(tools === undefined ? {} : { tools }), signal };
-  for await (const chunk of adapter.converter(provider, { purpose: 'compaction' }).stream(request)) assembler.push(chunk);
+  for await (const chunk of adapter.converter(provider).stream(request)) assembler.push(chunk);
   signal?.throwIfAborted();
   if (assembler.finish.kind !== 'stop') throw failure(ownerFailureCode(assembler.finish.failure?.message) ?? 'CODEX_NATIVE_FAILED', 'Owner-bound native compaction did not complete.');
   const blocks = assembler.blocks();
@@ -211,11 +222,10 @@ export class OwnerBoundCodexAdapter extends LlmAdapter {
   route(provider) { if (provider !== ROUTE) throw new LlmError('This adapter does not own that provider route.', 'NO_ADAPTER'); }
   providerInfo(provider) { this.route(provider); return { id: ROUTE, name: DISPLAY_NAME }; }
   providerRetryPolicy(provider) { this.route(provider); return this.retry; }
-  converter(provider, { purpose } = {}) {
-    // Native output appears only after the owner finishes the entire compact
-    // operation. Do not let a shorter converter idle timer preempt that lease.
-    // Ordinary replay/text streams retain their original 120-second idle cap.
-    const streamIdleTimeoutMs = purpose === 'compaction' ? 300000 : 120000;
+  converter(provider) {
+    // Use the public Pi idle watchdog for both replay/text and native output.
+    // Owner setup/total deadlines remain separate; native retains its 300s cap.
+    const streamIdleTimeoutMs = 300000;
     const profiles = new Map([[NATIVE_PROVIDER, { provider: NATIVE_PROVIDER, displayName: DISPLAY_NAME,
       piProvider: provider, configuredMaxTokens: new Map(), retryPolicy: this.retry, streamIdleTimeoutMs }]]);
     return new PiAiAdapter({ profiles: () => profiles, resolveApiKey: async () => undefined,

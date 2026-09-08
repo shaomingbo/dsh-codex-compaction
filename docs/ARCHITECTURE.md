@@ -1,6 +1,6 @@
 # Official-basic native compaction architecture
 
-`dsh-codex-compaction` `0.3.1` keeps the stock official `BasicCompactionEngine`
+`dsh-codex-compaction` `0.3.2` keeps the stock official `BasicCompactionEngine`
 as the primary and only automatic compaction backend and adds an optional
 account-owned native summarization/replay seam for standard `openai-codex` sessions,
 plus the legacy structured reader. The earlier A/B experiment established engineering
@@ -54,7 +54,28 @@ flowchart LR
   F -->|"later ordinary requests"| C
 ```
 
-## 0.3.1 recovery correction
+## 0.3.2 + owner 5.1.3 deadline separation
+
+Ordinary owner `open` selects 1800000ms total and 120000ms setup budgets. The owner
+retains metadata/auth, transport and total-deadline ownership; the companion simply
+configures the existing public PiAiAdapter idle watchdog to 300000ms for replay/text
+as well as native compaction. There is no new SSE monitor. Owner deadline errors remain
+`CODEX_RUNTIME_TIMEOUT`; converter inactivity remains Pi `TIMEOUT`.
+
+`purpose: 'compaction'` keeps a 300000ms total deadline including setup, without a separate
+shorter setup timer. Retries and same-lease fallback never renew it. At the owner factory,
+`timeoutMs` remains the total-budget option with explicit short-call semantics;
+`setupTimeoutMs` defaults to `min(timeoutMs, 120000)` and `compactionTimeoutMs` to
+`min(timeoutMs, 300000)`. These are not per-open caller duration overrides.
+
+Optional diagnostics keep `budgetMs` as the selected total budget and add allowlisted
+`totalBudgetMs`, `setupBudgetMs`, `timeoutBudgetMs` and `timeoutKind` (`setup` or `total`).
+Only nonnegative safe integers and fixed enums cross the seam, never credentials or bodies.
+Old owners and checkpoint readers remain compatible, but a consumer-only update cannot
+change an old owner's total cap. The complete fix requires both companion updates.
+No publication or live acceptance is claimed for this pair.
+
+## Historical 0.3.1 recovery correction
 
 The owner transport treats a valid completed/done event plus one valid compaction item as the
 stream boundary, not HTTP EOF. Premature EOF/socket failure is recoverable RESPONSE_STREAM;
@@ -107,9 +128,12 @@ authentication or performs network I/O and reports fixed reason codes.
 
 ## Version and release posture
 
-Candidate pair: `dsh-codex-compaction` `0.3.1` + `dsh-token-usage` `5.1.2`; the recovery
-behavior is live-accepted and the frozen production candidate's 498 tests have been rerun
-successfully, but the new tags await publication/verification and final packaging checks. Historical stable and RC tags (`0.3.0`, `0.3.0-rc.1`, `5.1.0`, `5.1.1`,
+Release pair: `dsh-codex-compaction` `0.3.2` + `dsh-token-usage` `5.1.3`. Tag identity and
+tag-installation results are recorded in the release; current-host acceptance is recorded
+separately. Neither publication nor current-host acceptance is claimed complete here.
+The earlier `0.3.1` + `5.1.2` recovery behavior was live-accepted and its frozen production
+candidate passed 498 tests; those historical results do not validate the new deadline policy.
+Historical stable and RC tags (`0.3.0`, `0.3.0-rc.1`, `5.1.0`, `5.1.1`,
 `5.1.0-rc.1`, `5.1.0-rc.2`) and evidence remain. Compaction supports only published DSH
 `0.1.2-rc.1`. The account installer retains alpha.3 + rc.1 support; temporary-home install/dump
 checks on both are final release gates. The accepted environment's launcher was alpha.3 while

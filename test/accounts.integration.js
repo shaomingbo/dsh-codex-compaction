@@ -16,6 +16,7 @@ import * as providerEntry from '../src/provider-entry.js';
 import * as policy from '../src/index.js';
 import * as compaction from '../src/compaction.js';
 import { ROUTE } from '../src/constants.js';
+import { registerRequestDeadlineTests } from './helpers/request-deadline.js';
 const root = process.env.ACCOUNT_SNAPSHOT_ROOT;
 if (!root || !basename(root).startsWith('dsh-codex-account-snapshot-') || (await lstat(join(root, 'node_modules'))).isSymbolicLink()) throw new Error('An isolated installed account snapshot is required; no live workspace fallback.');
 const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
@@ -141,7 +142,7 @@ const SOL = 'gpt-5.6-sol';
 const astraProfile = () => ({ id: ASTRA, contextWindow: 872000, maxTokens: 128000, input: ['text', 'image'],
   reasoningEfforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } });
 
-async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute, deferEngine = false, nativeReply, timeoutMs = 30000, compactionTimeoutMs = timeoutMs } = {}) {
+async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute, deferEngine = false, nativeReply, ordinaryReply, timeoutMs = 30000, compactionTimeoutMs = timeoutMs } = {}) {
   const route = { apiKeyEnv: 'OPENAI_CODEX_ACCESS_TOKEN', ...(settingsRoute ?? {}), models: settingsRoute?.models ?? [astraProfile()] };
   const reply = events => { const response = sse(events); if (responseMime) response.headers.set('content-type', responseMime); return response; };
   const ctx = new Context();
@@ -180,6 +181,7 @@ async function standardFixture(t, { failFirstStatus, responseMime, settingsRoute
         ];
         return nativeReply ? nativeReply({ events, fetches, signal: init.signal }) : reply(events);
       }
+      if (ordinaryReply) return ordinaryReply({ signal: init.signal });
       return reply([
         { type: 'response.created', response: { id: 'standard-fixture', status: 'in_progress' } },
         { type: 'response.output_item.added', output_index: 0, item: { type: 'message', id: 'standard-message', role: 'assistant', content: [], status: 'in_progress' } },
@@ -543,3 +545,5 @@ test('a real-schema-materialized Sol profile (input omitted) compacts natively e
   assert.equal(f.requests[0].body.model, SOL);
   assert.equal(f.hostCalls.length, 0, 'the stock text summarizer never ran');
 });
+
+registerRequestDeadlineTests(standardFixture);

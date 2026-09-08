@@ -27,7 +27,7 @@ for (const phase of ['preinstall', 'install', 'postinstall', 'prepare']) if (man
 for (const path of [manifest.main, ...Object.values(manifest.exports), ...Object.values(manifest.bin), manifest.dsh.bundle.patch, 'README.md', 'README.zh.md', 'LICENSE']) {
   if (typeof path !== 'string' || !existsSync(join(root, path)) || !statSync(join(root, path)).isFile()) fail(`Missing package entry: ${path}`);
 }
-if (manifest.version !== '0.3.1') fail('Update source/tag/catalog contracts together when evolving the version.');
+if (manifest.version !== '0.3.2') fail('Update source/tag/catalog contracts together when evolving the version.');
 // Every packaged file entry must exist on disk, and the installer's pinned
 // default source must stay in lockstep with the package version.
 for (const entry of manifest.files) {

@@ -1,6 +1,55 @@
-# 0.3.1 + 5.1.2 compaction recovery / 压缩恢复修复
+# Request deadlines and compaction recovery / 请求期限与压缩恢复
 
-## Scope and evidence / 范围与证据
+## 0.3.2 + 5.1.3 correction / 请求期限修正
+
+The companion pair separates ordinary setup, total duration and converter inactivity:
+ordinary owner `open` selects **1800000ms total** and **120000ms setup**, while the companion
+replay/text converter uses the existing public PiAiAdapter **300000ms idle watchdog** instead
+of 120000ms. No new SSE monitor is added. Owner setup/total errors retain
+`CODEX_RUNTIME_TIMEOUT`; the public Pi idle error retains **`TIMEOUT`** with a fixed idle-timeout
+message, never arbitrary upstream details.
+
+Compaction-purpose opens retain **300000ms total**, including setup, with no separately shorter
+setup cap; native converter idle stays **300000ms**. Retry and same-lease fallback do not renew
+the original deadline. Owner factory `timeoutMs` retains total-budget and explicit short-call
+semantics; `setupTimeoutMs` defaults to `min(timeoutMs, 120000)` and `compactionTimeoutMs` to
+`min(timeoutMs, 300000)`. The consumer cannot supply arbitrary durations through `open`.
+
+Existing diagnostic `budgetMs` still denotes total budget. Optional nonnegative safe-integer
+`totalBudgetMs`, `setupBudgetMs`, `timeoutBudgetMs` and strict `timeoutKind` (`setup` or `total`)
+distinguish selected budgets and deadline failures, without bodies, credentials or raw messages.
+Old owners/readers remain compatible with missing optional fields, but updating the consumer
+alone cannot change an old owner's total cap: both companion updates are needed.
+
+本次配对为 **compaction 0.3.2 + owner 5.1.3**：普通总预算 1800000ms、setup 120000ms、
+公开 Pi idle 300000ms；compaction 总预算仍为 300000ms 且没有额外较短的 setup 限制。
+旧 owner 读取兼容但不自动获得新总预算，完整修复必须成对更新。tag 身份及 tag 安装结果
+记录在 release；当前 host 验收单独记录，此处不宣称发布或 live 验收已完成。
+下方 498 项、157372ms 等记录均属于旧配对，不作为本次实测。
+
+### Local paired evidence / 本地配对证据
+
+The coordinating maintainer reports 275 owner tests and 25 paired tests passing, including an
+actual elapsed 130018ms tool-argument stream with fake credentials/transport. This exercises
+the real local owner/converter composition beyond the old 120-second cap; it is not a real
+upstream request or a current-host acceptance test. The final companion full-suite rerun after
+the idle diagnostic change passed 138 main + 46 legacy + 34 comparison tests; both package
+pack dry-runs and diff checks passed. Temporary-home public installer cycles and actual
+installed ESM entry loads passed for account on alpha.3 and the pair on rc.1, using local links.
+Those probes covered first/repeat install, read-only status, config dump, uninstall and repeat
+uninstall without starting a server or touching the real profile. Fixed-tag probes and
+current-host acceptance are separate release/deployment records.
+
+协调维护者已实测 owner 275 项、paired 25 项通过，含实际耗时 130018ms 的假凭据/传输工具
+参数流；idle 诊断修改后的 companion 全量复验通过 138 main + 46 legacy + 34 comparison。
+两包 pack dry-run/diff 检查通过。临时 HOME 的公开安装器首装/重装/status/dump/卸载/重复卸载
+及实际安装入口 ESM 加载通过：账户安装器 alpha.3、配对 rc.1，使用本地 link，未启动服务器。
+这些证据不代表真实上游、固定 tag 安装或当前 host 验收；后续分别记账。
+
+## Historical 0.3.1 + 5.1.2 scope and evidence / 历史范围与证据
+
+**All remaining sections preserve the 0.3.1 + 5.1.2 policy and evidence.** Their ordinary
+120-second limits and acceptance results are historical, not the current policy above.
 
 The recovery fix has passed an authorized real acceptance run on the original instance.
 The release pair is compaction 0.3.1 + account 5.1.2; tag identity and release-tag
@@ -90,7 +139,7 @@ remain excluded. This accepted release policy is not a latency SLA or an all-tim
 
 ## Verification / 验证
 
-### Current frozen candidate / 当前冻结候选
+### Historical 0.3.1 + 5.1.2 frozen candidate / 历史冻结候选
 
 The maintainer reran **498 passing tests**: `npm run check` gives plugin **135**, frozen
 legacy-A **46**, comparison **34**; `node scripts/test-accounts.js <account-source>` gives

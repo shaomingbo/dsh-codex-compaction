@@ -2,8 +2,13 @@
 
 [中文](README.zh.md)
 
-`0.3.1` contains the **live-accepted recovery fix**, paired with
-`dsh-token-usage` `5.1.2`. The stock official `BasicCompactionEngine` stays the primary
+**`0.3.2` + account owner `5.1.3`** separates ordinary setup and total request deadlines
+and raises the replay/text idle allowance. Both packages must be updated for the complete fix.
+Tag identity and tag-installation results are recorded in the release; current-host acceptance
+is recorded separately. Neither publication nor current-host acceptance is claimed here.
+
+This pair retains the historical recovery correction from `0.3.1` + `5.1.2`.
+The stock official `BasicCompactionEngine` stays the primary
 and only automatic compaction backend; this package adds an optional account-owned
 **native summarization/replay seam** for standard `openai-codex` sessions plus the
 legacy structured reader. No DSH core patches, no second login. Use the matching fixed
@@ -14,16 +19,16 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 --help
 ```
 
 - The installer requires the exact tested `dsh` CLI **`0.1.2-rc.1`** on PATH and delegates
@@ -35,8 +40,8 @@ npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 --help
   fails closed with guidance.** There is no direct-manifest fallback. Check
   `dsh --version`; note the historical PATH CLI `0.1.2-alpha.3` is a different, older
   build than the tested `0.1.2-rc.1` and is rejected.
-- Companion account package: **`dsh-token-usage` `5.1.2`** from the same
-  release train (`github:shaomingbo/dsh-token-usage#v5.1.2`, after publication). It is a capability companion,
+- Companion account package: **`dsh-token-usage` `5.1.3`** from the same
+  release train (`github:shaomingbo/dsh-token-usage#v5.1.3`, after publication). It is a capability companion,
   not a registry dependency: this package never guesses account versions and instead
   preflights the `codex-runtime/v1` protocol and auth owner at runtime. Adjacent/older
   DSH versions are unsupported or unknown; only what the CI matrix runs is claimed.
@@ -84,10 +89,34 @@ npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.1 --help
    Uninstalling the entire package removes the DSH bridge too; keep a matching reader
    for native histories.
 
-## 0.3.1 recovery correction
+## 0.3.2 request deadline correction (paired with owner 5.1.3)
 
-Native compaction leases/converters get up to 300 seconds, while ordinary request leases and
-replay/text converters stay at 120 seconds. Fixed-field diagnostics report phases, timings,
+- Ordinary owner `open` uses a **1800000ms total budget** and **120000ms setup budget**.
+  The replay/text converter uses the existing public DSH PiAiAdapter **300000ms idle
+  watchdog**, not a new SSE monitor. Setup, total duration and stream inactivity are distinct.
+- `purpose: 'compaction'` retains its **300000ms total budget** including setup, with no
+  separate shorter setup cap. Its converter idle allowance stays **300000ms**. Retries and
+  same-lease fallback never renew the owner deadline.
+- Owner factory `timeoutMs` remains the total-budget option, including explicit short-call
+  values. New `setupTimeoutMs` defaults to `min(timeoutMs, 120000)`;
+  `compactionTimeoutMs` defaults to `min(timeoutMs, 300000)`. These are owner factory
+  settings, not duration overrides exposed by `open` or this plugin.
+- Existing diagnostic `budgetMs` still means the selected total budget. Optional
+  `totalBudgetMs`, `setupBudgetMs`, `timeoutBudgetMs` and `timeoutKind: 'setup' | 'total'`
+  disclose deadline facts only. Owner deadline errors retain `CODEX_RUNTIME_TIMEOUT`;
+  the public Pi idle watchdog retains **`TIMEOUT`**. No credentials or body text are exposed.
+- Older owners remain readable/compatible with optional diagnostics absent, but keep their
+  old request budgets. Updating only the consumer cannot remove the owner's old total cap;
+  **update the pair together** for the complete correction.
+
+Tag identity and tag-installation results are recorded in the release; current-host acceptance
+is recorded separately, not inferred from local tests. Historical acceptance below is not
+evidence for the new ordinary-request deadline policy.
+
+## Historical 0.3.1 recovery correction
+
+In `0.3.1` + `5.1.2`, native compaction leases/converters got up to 300 seconds, while ordinary
+request leases and replay/text converters stayed at 120 seconds. Fixed-field diagnostics report phases, timings,
 byte/request counts, `budgetMs` and fixed-enum `eventCounts`, never raw content or identifiers.
 See [the contract](docs/CODEX_RUNTIME_V1.md).
 
