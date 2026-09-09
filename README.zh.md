@@ -2,9 +2,11 @@
 
 [English](README.md)
 
-**`0.3.2` + 账户 owner `5.1.3`**，分离普通请求 setup/总期限并延长重放/文本 idle 容限。
-完整修复必须成对更新。tag 身份及 tag 安装结果记录在 release；当前 host 验收单独记录。
-此处不宣称 GitHub 发布或当前 host 验收已完成。
+**`0.3.3`** 修复原生检查点与用户/工具图片的混合回放，并支持同一 owner 下的混合历史
+reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值，补充真实附件服务回归。
+现有账户 owner **`5.1.3`** 即可配套，不要求同步升级账户包；保留 `0.3.2` + `5.1.3` 的期限修正。
+修复运行时代码已通过原失败会话的真实回放；混合 Basic 压缩另有隔离集成证据。
+精确 tag 身份与正式 tag 安装结果记录在 release，不能用本地 link 验收替代。
 
 本配对保留 `0.3.1` + `5.1.2` 的历史恢复修正。
 官方 `BasicCompactionEngine` 仍是唯一的主/自动压缩后端，本包在其上增加一个可选的、
@@ -16,16 +18,16 @@
 ## 安装（tag 存在后）
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3
 ```
 
 无参数等同 `install`；默认 profile 为 `web`。其他命令：
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 --help
 ```
 
 - 安装器要求 PATH 上存在精确测试过的 `dsh` CLI **`0.1.2-rc.1`**，所有变更都委托给公开
@@ -58,8 +60,12 @@ npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 --help
    - 每个 owner 租约最多**一次额外恢复请求**：Native retry 或透明文本 fallback——同
      账户、同模型、同端点，不叠加、不续期。取消、租约过期、身份/协议错误与无效 checkpoint
      不触发恢复；已含原生 carrier 的历史绝不文本 fallback。
-   - **图片历史在本首发版本不被接管**；它们保持官方文本路径。原生 carrier 混入不支持
-     媒体会被显式拒绝。
+   - **图片回放修复（0.3.3）：**普通原生 reader 通过宿主持久附件服务与公开 Pi 转换器
+     支持用户图片和工具结果图片。无原生 carrier 的图片历史仍走官方 Basic；混合历史由
+     同一 owner 绑定的 reader 按 Basic 指令执行一次 **reader-text** 摘要请求，再由 Basic
+     提交可读文本摘要。这是主动选择的模式，不是失败 fallback，也不是原生图片压缩；
+     v1 codec 仍只接受文本。附件缺失、纯文本模型、不支持的图片角色和损坏 carrier 仍拒绝。
+     宿主原有的图片投影、总量限额与 offloading 策略保持不变。
    - **语义回忆是有损的，与安全拒绝是两回事。** 原生 checkpoint 重放的是压缩摘要，
      不是原始对话：envelope 格式与回放链路完全可以有效，模型仍可能回答不记得已压缩
      的细节。曾出现合成代码回忆失败。压缩不保证无损；关键状态、决策和代码引用应另存项目文件，

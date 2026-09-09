@@ -1,6 +1,6 @@
 // Generic DSH-to-owner-capability adapter. No OAuth, endpoint, or model catalog ownership.
 import { randomUUID } from 'node:crypto';
-import { LlmAdapter, LlmError, PiAiAdapter, BlockAssembler, resolveRetryPolicy, isCompactCheckpointSource } from './compatibility.js';
+import { LlmAdapter, LlmError, PiAiAdapter, PiAiConfig, BlockAssembler, resolveRetryPolicy, isCompactCheckpointSource } from './compatibility.js';
 import { ROUTE, STANDARD_ROUTE, NATIVE_PROVIDER, DISPLAY_NAME, failure } from './constants.js';
 
 const PREFIX = '<dsh-codex-compaction';
@@ -37,7 +37,7 @@ export function isNativeCarrier(message) {
 }
 const contentHasImages = blocks => (blocks ?? []).some(block => block.type === 'image'
   || (block.type === 'tool-result' && contentHasImages(block.content)));
-/** First-version takeover boundary: image history never becomes native state. */
+/** Detect images, including durable images returned by tools. */
 export const historyHasImages = messages => messages.some(message => contentHasImages(message?.content));
 export function assertTextHistory(messages) {
   const inspect = blocks => {
@@ -61,6 +61,8 @@ export function requireRuntime(runtime) {
 /** Pure source inspection delegates native JSON semantics to the owning runtime. */
 export function inspectCarrier(runtime, message, expected) {
   if (!isNativeCarrier(message)) return undefined;
+  // Replacing a carrier with its replay slot must not erase extra media.
+  if (contentHasImages(message.content)) throw failure('CODEX_NATIVE_INVALID_CARRIER', 'Native checkpoint framing cannot contain image blocks.');
   const texts = message.content.filter(block => block.type === 'text' && typeof block.text === 'string' && block.text.startsWith(PREFIX));
   if (message.source.nativeCodex !== undefined) {
     if (texts.length) throw failure('CODEX_NATIVE_AMBIGUOUS_CARRIER', 'A checkpoint cannot contain both structured and envelope native payloads.');
@@ -116,7 +118,7 @@ async function* relayOwnerChunks(chunks) {
  * account binding; identity/format failures fail closed and never fall back.
  */
 async function* ownerReplayStream(adapter, options) {
-  assertTextHistory(options.messages); options.signal?.throwIfAborted();
+  options.signal?.throwIfAborted();
   const lease = await openLease(adapter, { model: options.model, signal: options.signal });
   try {
     yield* streamOnLease(adapter, lease, options);
@@ -213,9 +215,11 @@ export async function ownerCompact(adapter, request) {
 }
 
 export class OwnerBoundCodexAdapter extends LlmAdapter {
-  constructor(getRuntime) {
+  constructor(getRuntime, { resolveAttachments, resolveImageAccess } = {}) {
     super();
     this.getRuntime = getRuntime;
+    this.resolveAttachments = resolveAttachments;
+    this.resolveImageAccess = resolveImageAccess;
     this.retry = resolveRetryPolicy({ mode: 'normal', maxRetries: 0 }, 'Codex owner-bound runtime');
   }
   runtime() { return requireRuntime(this.getRuntime()); }
@@ -226,10 +230,17 @@ export class OwnerBoundCodexAdapter extends LlmAdapter {
     // Use the public Pi idle watchdog for both replay/text and native output.
     // Owner setup/total deadlines remain separate; native retains its 300s cap.
     const streamIdleTimeoutMs = 300000;
+    // PiAiAdapter accepts already-resolved profiles; it does not apply defaults.
+    // Obtain the three image bounds from the published schema, not private code
+    // or a second set of constants. Owner auth/models/retry/deadlines stay ours.
+    const { maxRequestImageBytes, requestImagePixelBudget, requestImageMaxBytes } =
+      PiAiConfig({ providers: { [NATIVE_PROVIDER]: {} } }).providers[NATIVE_PROVIDER];
     const profiles = new Map([[NATIVE_PROVIDER, { provider: NATIVE_PROVIDER, displayName: DISPLAY_NAME,
-      piProvider: provider, configuredMaxTokens: new Map(), retryPolicy: this.retry, streamIdleTimeoutMs }]]);
+      piProvider: provider, configuredMaxTokens: new Map(), retryPolicy: this.retry, streamIdleTimeoutMs,
+      maxRequestImageBytes, requestImagePixelBudget, requestImageMaxBytes }]]);
     return new PiAiAdapter({ profiles: () => profiles, resolveApiKey: async () => undefined,
       auth: { credentials: EMPTY_CREDENTIALS, authContext: NO_AMBIENT },
+      resolveAttachments: this.resolveAttachments, resolveImageAccess: this.resolveImageAccess,
       onReplayDegrade: () => { throw failure('CODEX_NATIVE_REPLAY_INCOMPATIBLE', 'Native reasoning metadata requires its compatible reader.'); } });
   }
   metadataProvider(runtime) {
@@ -239,13 +250,13 @@ export class OwnerBoundCodexAdapter extends LlmAdapter {
   }
   async listModels(provider) {
     this.route(provider);
-    return this.runtime().models().map(model => ({ provider: ROUTE, id: model.id, name: model.name, inputModalities: ['text'] }));
+    return this.runtime().models().map(model => ({ provider: ROUTE, id: model.id, name: model.name, inputModalities: model.input.filter(kind => kind === 'text' || kind === 'image') }));
   }
   async resolveModel(provider, model, signal) {
     this.route(provider); signal?.throwIfAborted();
     const runtime = this.runtime();
     const result = await this.converter(this.metadataProvider(runtime)).resolveModel(NATIVE_PROVIDER, model, signal);
-    return { ...result, provider: ROUTE, inputModalities: ['text'] };
+    return { ...result, provider: ROUTE };
   }
   async prepareCall(provider, model, signal) {
     const runtime = this.runtime();

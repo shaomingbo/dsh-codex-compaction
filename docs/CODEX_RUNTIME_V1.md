@@ -6,6 +6,18 @@ caller receives OAuth values, a credential reference, arbitrary authenticated fe
 or access to another plugin's grant. Existing `openai-codex` routing/login remains
 untouched.
 
+## 0.3.3 consumer image replay repair
+
+No owner contract or checkpoint version changes. Existing `provider({ mode: 'stream',
+replay })` accepts Pi image content and expands native replay slots on the same bound
+connection. The consumer now obtains projected image bytes using the public DSH
+PiAiAdapter attachment callbacks. Its Basic mixed-image summarization uses that stream
+with the full Basic instruction and a `purpose: 'compaction'` lease, returning readable
+text instead of a native envelope. It is reported as `reader-text`, never as native
+image compaction or recovery fallback. One request, no retry or stock fallback on
+failure; the normal usage receipt passes through. The owner's v1 native compact
+transport and checkpoint codec remain text-only and unchanged.
+
 ## 0.3.2 + 5.1.3 setup, total and idle budgets
 
 The account composition selects **1800000ms total** for an ordinary `open` and

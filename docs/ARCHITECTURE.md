@@ -1,6 +1,6 @@
 # Official-basic native compaction architecture
 
-`dsh-codex-compaction` `0.3.2` keeps the stock official `BasicCompactionEngine`
+`dsh-codex-compaction` `0.3.3` keeps the stock official `BasicCompactionEngine`
 as the primary and only automatic compaction backend and adds an optional
 account-owned native summarization/replay seam for standard `openai-codex` sessions,
 plus the legacy structured reader. The earlier A/B experiment established engineering
@@ -42,16 +42,37 @@ The package still ships the provider bridge and policy entry together as separat
 Cordis rows: logical separation first, not a claim that uninstalling the whole
 package keeps the route reader available.
 
+## 0.3.3 image replay repair
+
+The bridge now wires the published PiAiAdapter attachment/access resolvers just like
+stock rc.1. Ordinary owner `mode: stream` already converts images, so this change
+requires no owner codec/transport extension. The v1 `mode: compact` path remains
+text-only, as does legacy structured manual compaction.
+
+For standard Basic requests containing both native carriers and images, the seam
+keeps all applicability/preference/instruction guards and opens one compaction-budget
+lease. It replays validated opaque state and host-projected images through the same
+owner's normal stream, with Basic's instruction intact. Basic receives a **reader-text**
+summary and retains responsibility for validation, usage, shrink checks and commit.
+This is a deliberate one-request mode, not a retry/failure fallback. Failed or cancelled
+summaries cannot authorize history replacement; no plain adapter receives opaque state.
+Existing checkpoints and attachment files are not rewritten. Ordinary generation does
+not require native creation to be enabled; mixed summarization still requires it.
+Missing attachments, unsupported image roles/text-only models, and images embedded in
+carrier framing fail closed. Stock request-image projection/offloading limits still apply.
+
 ## Standard-route flow
 
 ```mermaid
 flowchart LR
   A["Official basic triggers/pressure/overflow"] --> B["summarizeWithLlm purpose=compaction"]
-  B -->|"session ON + gate + tail"| C["Owner lease native compact"]
+  B -->|"eligible text-only"| C["Owner lease native compact"]
+  B -->|"eligible mixed carrier and image"| G["Owner lease reader-text stream"]
   B -->|"session OFF / no carrier"| D["Stock host text path"]
-  C -->|"V1 text envelope summary block"| E["Official frame, commit and flush"]
-  E --> F["Compact-checkpoint replacement message"]
-  F -->|"later ordinary requests"| C
+  C -->|"V1 text envelope"| E["Official shrink, commit and flush"]
+  G -->|"readable text summary"| E
+  E --> F["Official history replacement"]
+  F -->|"later ordinary requests"| I["Bound reader for remaining native state"]
 ```
 
 ## 0.3.2 + owner 5.1.3 deadline separation
@@ -128,9 +149,11 @@ authentication or performs network I/O and reports fixed reason codes.
 
 ## Version and release posture
 
-Release pair: `dsh-codex-compaction` `0.3.2` + `dsh-token-usage` `5.1.3`. Tag identity and
-tag-installation results are recorded in the release; current-host acceptance is recorded
-separately. Neither publication nor current-host acceptance is claimed complete here.
+Release pair: `dsh-codex-compaction` `0.3.3` + published `dsh-token-usage` `5.1.3`.
+No new owner release or capability version is needed for image replay. The repaired
+runtime passed original-instance ordinary replay; mixed Basic summarization has isolated
+integration coverage. Exact tag identity and tag-installation results are recorded in
+the release, separately from local-link acceptance.
 The earlier `0.3.1` + `5.1.2` recovery behavior was live-accepted and its frozen production
 candidate passed 498 tests; those historical results do not validate the new deadline policy.
 Historical stable and RC tags (`0.3.0`, `0.3.0-rc.1`, `5.1.0`, `5.1.1`,

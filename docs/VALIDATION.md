@@ -7,7 +7,43 @@ or of superiority over any other compaction implementation.
 本文件只含去标识化事实：不含真实会话 ID、私密路径、夹具密钥或 checkpoint 哈希。
 这些结果**不是**无损回忆的证明，也不构成相对任何其他压缩实现的优劣证明。
 
-## 0.3.1 + 5.1.2 acceptance / 本次真实验收
+## 0.3.3 image replay repair / 图片回放修复
+
+The complete image repair was transplanted onto published compaction `v0.3.2`
+(commit `48762d23b83c19fe517d319404ce0007c933e7e9`) in an independent release checkout.
+The ordinary runtime source is unchanged from the accepted local R2; release version,
+installer default source and documentation are separate packaging changes.
+
+- `npm run check`: **163 plugin + 46 legacy-A + 34 comparison = 243 passed**.
+- Explicit isolated paired suite against the exact published Accounts `v5.1.3`
+  commit `dddb7f2bd62ddffc24c62916b205796b1c78c5a0`: **275 account + 27 integration
+  passed**, 1 existing optional 130-second real-time case skipped. Virtual-clock
+  setup/idle/total deadline tests passed. Total: **545 passed, 1 skipped**.
+- The earlier image-development pairing included unrelated Antigravity fixes and
+  had 279 account tests; it is not substituted for the exact-tag pairing above.
+- Four real temporary `LocalAttachmentStore` cases exercise user/tool images in
+  ordinary generation and Basic compaction. Strict fake-service and aggregate-bound
+  tests retain stock Pi defaults and rejection guards. Real-owner integration checks
+  wire images plus native state, Basic readable-summary commit/restore, and no history
+  replacement or stock retry on reader failure. Transport/auth are injected fakes.
+- Independent read-only review found no substantiated defects; its 26 focused tests
+  passed. This does not replace the maintainer's complete release gates.
+- `pnpm peers check`, public-import/package contracts and `git diff --check` passed.
+  The real rc.1 CLI temporary-home link install/repeat/status/dump/uninstall cycle
+  passed without booting a server or touching a live profile.
+- Authorized original-instance replay of the formerly failing native-checkpoint plus
+  screenshot history returned the requested text with `stop` / `completed` and zero
+  tool events after the user restarted. No old history or images were rewritten.
+  This proves ordinary replay, not lossless recall or an additional live mixed Basic
+  compaction. The accepted host still uses its frozen local R2 link.
+- Fixed-tag identity, packaging hashes, and post-publication tag installation results
+  are recorded in the GitHub release; local-link acceptance does not prove them.
+
+中文摘要：发布候选通过 545 项测试（另有 1 项既有可选实时测试跳过），并使用正式账户
+5.1.3 的精确源码配对验证。原失败会话的真实普通回放已恢复；混合 Basic 压缩为隔离
+集成验证，不夸大为新的实机压缩验收。生产仍保留冻结 R2，正式 tag 换装另行安排。
+
+## 0.3.1 + 5.1.2 acceptance / 历史真实验收
 
 The recovery fix has passed an authorized real run on the original instance. The release
 pair is compaction `0.3.1` + account `5.1.2`; tag identity is recorded in the GitHub releases.

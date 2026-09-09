@@ -28,6 +28,18 @@ export function isRecoverableNativeFailure(error, signal) {
   return RECOVERABLE.has(code) || /^CODEX_RUNTIME_HTTP_[5]\d\d$/.test(code);
 }
 
+async function* completedText(chunks, failureCode) {
+  let terminal = false;
+  for await (const chunk of chunks) {
+    if (chunk.type === 'finish') {
+      if (chunk.reason?.kind !== 'stop') throw failure(chunk.reason?.failure?.code ?? failureCode, 'Owner-bound text summary did not finish successfully.');
+      terminal = true;
+    }
+    yield chunk;
+  }
+  if (!terminal) throw failure(failureCode, 'Owner-bound text summary ended without a successful finish.');
+}
+
 const MAX_ATTEMPTS = 4096;
 
 /** Profile default (RC: off) plus per-session on/off overrides. */
@@ -128,9 +140,6 @@ export class NativeCompactionSeam {
       if (carriers.length && !enabled) {
         throw failure('CODEX_NATIVE_READER_REQUIRED', 'Native Codex checkpoints in the compacted region require the native reader; enable /codex-native for this session or use the structured preset.');
       }
-      if (carriers.length && images) {
-        throw failure('CODEX_NATIVE_TEXT_ONLY', 'This history mixes native checkpoints with unsupported media; the native reader refuses to replay it.');
-      }
       if (!enabled) return yield* next();
       // Carrier histories are fail-closed on EVERY guard branch below: no
       // early return may hand opaque native state to the plain adapter.
@@ -149,18 +158,29 @@ export class NativeCompactionSeam {
         }
         return yield* next();
       }
-      if (images) {
+      if (images && !carriers.length) {
         this.state.recordAttempt(sessionId, { kind: 'none', reason: 'images-present', model: options.model });
         return yield* next();
       }
       const history = options.messages.slice(0, -1);
       const recovery = this.state.recovery;
       const flight = recovery.begin({ ...options, sessionId });
-      let lease, cause, kind = 'native', outputComplete = false;
+      let lease, cause, kind = images ? 'reader-text' : 'native', outputComplete = false;
       const record = fields => this.state.recordAttempt(sessionId, { kind, model: options.model, ...(cause ? { cause } : {}), ...fields });
       record({ outcome: 'running' });
       try {
         lease = await this.adapter.seamLease({ model: options.model, signal });
+        if (images) {
+          // The v1 native compactor/codec is text-only. Its ordinary reader can
+          // replay opaque state alongside images, so ask that SAME bound reader
+          // for Basic's text summary. This is a deliberate one-request mode,
+          // not a failure fallback; never send the envelope to the stock route.
+          yield* completedText(this.adapter.seamStreamOnLease(lease, options), 'CODEX_NATIVE_READER_FAILED');
+          signal?.throwIfAborted();
+          outputComplete = true;
+          record({ outcome: 'reader-text', diagnostics: operationDiagnostic(lease) });
+          return;
+        }
         const compact = () => this.adapter.seamCompactOnLease(lease, { model: options.model, messages: history,
           system: options.system, tools: options.tools, signal });
         let native;
@@ -179,15 +199,7 @@ export class NativeCompactionSeam {
             if (carriers.length) throw error;
             kind = 'fallback';
             record({ outcome: 'running' });
-            let terminal = false;
-            for await (const chunk of this.adapter.seamStreamOnLease(lease, options)) {
-              if (chunk.type === 'finish') {
-                if (chunk.reason?.kind !== 'stop') throw failure(chunk.reason?.failure?.code ?? 'CODEX_NATIVE_FALLBACK_FAILED', 'Text fallback did not finish successfully.');
-                terminal = true;
-              }
-              yield chunk;
-            }
-            if (!terminal) throw failure('CODEX_NATIVE_FALLBACK_FAILED', 'Text fallback ended without a successful finish.');
+            yield* completedText(this.adapter.seamStreamOnLease(lease, options), 'CODEX_NATIVE_FALLBACK_FAILED');
             signal?.throwIfAborted();
             outputComplete = true;
             record({ outcome: 'fallback-text', diagnostics: operationDiagnostic(lease) });
@@ -220,9 +232,6 @@ export class NativeCompactionSeam {
       }
     }
     if (carriers.length) {
-      if (images) {
-        throw failure('CODEX_NATIVE_TEXT_ONLY', 'This history mixes native checkpoints with unsupported media; the native reader refuses to replay it.');
-      }
       const gate = await this.gate(options.model, signal);
       if (!gate.applicable) {
         throw failure('CODEX_NATIVE_REPLAY_UNAVAILABLE', `Native Codex checkpoints cannot be replayed on this route (${gate.reason}); the request was not sent.`);

@@ -6,7 +6,7 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { zstdDecompressSync } from 'node:zlib';
 import { Context, Service } from '@deepseek-ai/cordis';
-import Llm, { LlmAdapter, BlockAssembler, createUserMessage, createAssistantMessage } from '@deepseek-ai/dsh-llm';
+import Llm, { LlmAdapter, BlockAssembler, createUserMessage, createAssistantMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm';
 import Sessions from '@deepseek-ai/dsh-session';
 import Projections from '@deepseek-ai/dsh-session-projection';
 import Meter from '@deepseek-ai/dsh-token-meter';
@@ -16,6 +16,8 @@ import * as providerEntry from '../src/provider-entry.js';
 import * as policy from '../src/index.js';
 import * as compaction from '../src/compaction.js';
 import { ROUTE } from '../src/constants.js';
+import { fakeAttachments, imageBlock, imageData } from './helpers/images.js';
+import { isNativeCarrier } from '../src/runtime-adapter.js';
 import { registerRequestDeadlineTests } from './helpers/request-deadline.js';
 const root = process.env.ACCOUNT_SNAPSHOT_ROOT;
 if (!root || !basename(root).startsWith('dsh-codex-account-snapshot-') || (await lstat(join(root, 'node_modules'))).isSymbolicLink()) throw new Error('An isolated installed account snapshot is required; no live workspace fallback.');
@@ -274,6 +276,90 @@ test('committed native state replays through the standard route on later ordinar
   assert.equal(assembler.blocks()[0].text, 'continued');
   assert.ok(f.requests.at(-1).body.input.some(item => item.type === 'compaction'), 'opaque checkpoint replayed as a native item');
   assert.equal(f.hostCalls.length, 0);
+});
+
+for (const nested of [false, true]) {
+  test(`real owner replays checkpoint with ${nested ? 'tool' : 'user'} image and Basic commits a readable summary`, async t => {
+    const f = await standardFixture(t);
+    const attachments = fakeAttachments();
+    f.ctx.provide('attachments', attachments);
+    f.addStandardHistory(); f.enable();
+    await f.engine.compactNow(f.agent, f.signal);
+    const session = f.agent.session;
+    const checkpoint = session.deriveMessages().find(isNativeCarrier);
+    assert.ok(checkpoint);
+    const image = createUserMessage({ source: { kind: 'user' }, content: nested
+      ? [{ type: 'tool-result', toolCallId: 'fixture-image-call', content: [imageBlock()] }] : [imageBlock()] });
+    const toolCall = createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [
+      { type: 'tool-call', id: 'fixture-image-call', name: 'read_image', arguments: '{}' },
+    ] });
+    const messages = [checkpoint, ...(nested ? [toolCall] : []), image];
+    const original = JSON.stringify(messages);
+    const request = { provider: 'openai-codex', model: ASTRA, sessionId: session.id, messages, signal: f.signal };
+    const assembler = new BlockAssembler();
+    for await (const chunk of f.ctx.llm.stream(request)) assembler.push(chunk);
+    assert.equal(assembler.finish.kind, 'stop');
+    const assertWire = body => {
+      assert.ok(body.input.some(item => item.type === 'compaction'), 'opaque state expanded to native wire item');
+      assert.ok(!body.input.some(item => item.type === 'compaction_trigger'), 'no text-only native compact request');
+      const images = body.input.flatMap(item => [...(Array.isArray(item.content) ? item.content : []), ...(Array.isArray(item.output) ? item.output : [])]).filter(part => part.type === 'input_image');
+      assert.equal(images.length, 1, 'the actual owner fetch receives the image');
+      assert.equal(images[0].image_url, `data:image/png;base64,${imageData.toString('base64')}`);
+      assert.doesNotMatch(JSON.stringify(body), /DSH_CODEX_OWNER_REPLAY_|<dsh-codex-compaction/);
+    };
+    assertWire(f.requests.at(-1).body);
+    assert.equal(JSON.stringify(messages), original);
+    // Add the same mixed history through public session events, then let the
+    // real Basic engine select, summarize, shrink and commit it (no hand-built summary).
+    const turn = session.seq;
+    session.append('turn/start', { turn });
+    session.append('step/start', { turn, step: 0 });
+    if (nested) session.append('assistant/message', { turn, step: 0, message: toolCall }, { surfaceOp: 'append' });
+    if (nested) {
+      session.append('tool/call', { turn, step: 0, callId: 'fixture-image-call', name: 'read_image', arguments: '{}' });
+      session.append('tool/result', { turn, step: 0, message: createToolResultMessage({ callId: 'fixture-image-call', content: [imageBlock()], isError: false }) }, { surfaceOp: 'append' });
+    } else session.append('user/message', image, { surfaceOp: 'append' });
+    session.append('assistant/message', { turn, step: 0, message: createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Image investigation history. '.repeat(4000) }] }) }, { surfaceOp: 'append' });
+    session.append('step/end', { turn, step: 0 });
+    session.append('step/start', { turn, step: 1 });
+    session.append('assistant/message', { turn, step: 1, message: createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Keep the final tail.' }] }) }, { surfaceOp: 'append' });
+    session.append('step/end', { turn, step: 1 });
+    session.append('turn/end', { turn, reason: { kind: 'completed' } });
+    const before = f.requests.length;
+    const result = await f.engine.compactNow(f.agent, f.signal);
+    assert.equal(typeof result.summarySeq, 'number');
+    assert.equal(f.requests.length, before + 1, 'one owner lease/request for mixed summarization');
+    assertWire(f.requests.at(-1).body);
+    assert.match(JSON.stringify(f.requests.at(-1).body), /You are now acting as a compaction engine/);
+    assert.equal(f.ctx.codexBridge.nativePreferenceStatus(session.id).lastAttempt.outcome, 'reader-text');
+    assert.equal(session.deriveMessages().some(isNativeCarrier), false, 'Basic replaces the compacted carrier with readable text');
+    assert.ok(session.deriveMessages().some(m => m.content.some(b => b.text === 'continued')));
+    assert.equal(f.hostCalls.length, 0, 'neither request walks the stock adapter');
+    assert.equal(attachments.reads.length, 2);
+    assert.ok(f.requests.every(r => r.account === 'standard-fixture-account'));
+    const restored = f.ctx.sessions.create(undefined, { seed: JSON.parse(JSON.stringify(session.snapshotEvents())) });
+    const after = new BlockAssembler();
+    for await (const chunk of f.ctx.llm.stream({ ...request, messages: restored.deriveMessages() })) after.push(chunk);
+    assert.equal(after.finish.kind, 'stop');
+    assert.equal(f.hostCalls.length, 1, 'restored readable summary needs no opaque reader');
+  });
+}
+
+test('failed mixed reader summary leaves the real Basic history unchanged and never retries stock', async t => {
+  const f = await standardFixture(t, { ordinaryReply: () => new Response('synthetic failure', { status: 503 }) });
+  f.ctx.provide('attachments', fakeAttachments());
+  f.addStandardHistory(); f.enable();
+  await f.engine.compactNow(f.agent, f.signal);
+  const session = f.agent.session;
+  session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [imageBlock()] }), { surfaceOp: 'append' });
+  f.addStandardHistory();
+  const before = JSON.stringify(session.deriveMessages());
+  const requests = f.requests.length;
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal));
+  assert.equal(JSON.stringify(session.deriveMessages()), before);
+  assert.equal(f.requests.length, requests + 1);
+  assert.equal(f.hostCalls.length, 0);
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(session.id).lastAttempt.outcome, 'failed');
 });
 
 test('one in-lease native retry after a recoverable server failure never walks stock', async t => {

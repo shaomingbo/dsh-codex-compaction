@@ -1,4 +1,4 @@
-import { Service } from './compatibility.js';
+import { Service, resolveImageAttachmentAccess } from './compatibility.js';
 import { OwnerBoundCodexAdapter, requireRuntime, inspectCarrier, isNativeCarrier } from './runtime-adapter.js';
 import { NativeSessionState } from './native-seam.js';
 
@@ -7,7 +7,11 @@ export class CodexRuntimeBridge extends Service {
   constructor(ctx, getRuntime, { profileNative = false, recoverPreference } = {}) {
     super(ctx, 'codexBridge');
     this.getRuntime = getRuntime;
-    this.adapter = new OwnerBoundCodexAdapter(getRuntime);
+    this.adapter = new OwnerBoundCodexAdapter(getRuntime, {
+      resolveAttachments: () => ctx.get('attachments'),
+      resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(attachments,
+        hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref),
+    });
     this.nativeState = new NativeSessionState(profileNative, recoverPreference);
   }
   runtime() { return requireRuntime(this.getRuntime()); }

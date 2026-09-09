@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.3
+
+Companion remains published `dsh-token-usage` `5.1.3`; no owner contract or codec change.
+
+- Replay user and tool-result images alongside native checkpoints through the public
+  PiAiAdapter attachment/access resolvers and the existing account-owned stream.
+- For mixed carrier/image histories, official Basic uses one compaction-budget owner
+  lease and its full instruction to obtain a readable `reader-text` summary. Basic
+  still owns validation, usage, shrinking and commit. No retry or stock fallback on
+  reader-text failure; legacy structured native compaction remains text-only.
+- Materialize all three image bounds from the published Pi Config schema. Omitting
+  pixel/byte budgets caused the real attachment store to reject valid references with
+  `INVALID_ATTACHMENT_REF`; stricter mocks and real temporary-store tests cover it.
+- Preserve model image capability, carrier/identity/role guards, host image offloading,
+  and the 0.3.2 setup/idle/total deadline behavior. No old history or images are rewritten.
+- The repaired runtime passed a real original-session reply with normal completion and
+  no tools. Mixed Basic compression is tested in isolation, not claimed as an additional
+  live compaction. Release identity and fixed-tag installation results are recorded in
+  the GitHub release, separately from local-link acceptance.
+
 ## 0.3.2
 
 Companion: `dsh-token-usage` `5.1.3`. Tag identity and tag-installation results are recorded

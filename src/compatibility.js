@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { TARGET_DSH, failure } from './constants.js';
 export { Service } from '@deepseek-ai/cordis';
 export { isCompactCheckpointSource } from '@deepseek-ai/dsh-compaction';
-export { LlmAdapter, LlmError, BlockAssembler, resolveRetryPolicy } from '@deepseek-ai/dsh-llm';
-export { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai';
+export { LlmAdapter, LlmError, BlockAssembler, resolveRetryPolicy, resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm';
+export { PiAiAdapter, Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
 
 const REQUIRED = [
   '@deepseek-ai/dsh-compaction', '@deepseek-ai/dsh-session',

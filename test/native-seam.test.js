@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local';
 import { Context, Service } from '@deepseek-ai/cordis';
 import Llm, { LlmAdapter, BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import Commands from '@deepseek-ai/dsh-commands';
@@ -9,12 +12,13 @@ import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction';
 import * as providerEntry from '../src/provider-entry.js';
 import * as policy from '../src/index.js';
 import { fakeRuntime } from './helpers/fake-runtime.js';
+import { fakeAttachments, imageBlock, imageData } from './helpers/images.js';
 import { ROUTE, STANDARD_ROUTE } from '../src/constants.js';
 import { CODEC_PREFIX, isNativeCarrier } from '../src/runtime-adapter.js';
 import { BASIC_INSTRUCTION_FIRST_LINE, basicInstructionTail, blocksCarryNativeEnvelope } from '../src/native-checkpoint.js';
 import { isRecoverableNativeFailure } from '../src/native-seam.js';
 
-const ASTRA = { id: 'gpt-6-astra', contextWindow: 872000, maxTokens: 128000 };
+const ASTRA = { id: 'gpt-6-astra', contextWindow: 872000, maxTokens: 128000, input: ['text', 'image'] };
 const user = text => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] });
 const instruction = () => createUserMessage({ source: { kind: 'plugin', plugin: 'dsh-compaction-basic' },
   content: [{ type: 'text', text: `${BASIC_INSTRUCTION_FIRST_LINE}\n\n(remaining pinned instruction body)` }] });
@@ -325,22 +329,117 @@ test('image histories stay on the original path and are reported, never taken ov
   assert.equal(recorded.reason, 'images-present');
 });
 
-test('carriers plus unsupported media are rejected explicitly, not dropped or faked', async t => {
-  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA] } });
-  f.enable();
-  const first = await collect(f.ctx.llm.stream(compactRequest([user('first'), instruction()])));
-  const message = framed(committed(first.blocks()));
-  const imageHistory = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'image', ref: { attachmentId: 'fixture' } }] });
-  await assert.rejects(
-    attempt(f.ctx, compactRequest([message, imageHistory, instruction()])),
-    error => error.code === 'CODEX_NATIVE_TEXT_ONLY',
-  );
-  await assert.rejects(
-    attempt(f.ctx, { provider: STANDARD_ROUTE, model: 'gpt-6-astra', sessionId: 's1', messages: [message, imageHistory] }),
-    error => error.code === 'CODEX_NATIVE_TEXT_ONLY',
-  );
-  assert.equal(f.hostCalls.length, 0);
-});
+for (const durable of [false, true]) for (const nested of [false, true]) {
+  for (const purpose of ['generation', 'compaction']) {
+    test(`${durable ? 'real attachment store: ' : ''}native checkpoint plus ${nested ? 'tool-result' : 'user'} image supports ${purpose} without losing either`, async t => {
+      const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA] } });
+      let attachments, block = imageBlock, expectedData = imageData, expectedMediaType = 'image/png';
+      if (durable) {
+        const home = await mkdtemp(join(tmpdir(), 'codex-image-store-'));
+        t.after(() => rm(home, { recursive: true, force: true }));
+        await f.ctx.plugin(LocalAttachmentStore, { dshHome: home });
+        attachments = f.ctx.attachments;
+        // Valid synthetic GIF, decoded/normalized by the real published store.
+        const ref = await attachments.saveImage({ data: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'), mediaType: 'image/gif' });
+        block = () => ({ type: 'image', attachment: ref });
+        expectedData = Buffer.from((await attachments.readImage(ref)).data);
+        expectedMediaType = ref.mediaType;
+      } else {
+        attachments = fakeAttachments();
+        f.ctx.provide('attachments', attachments);
+      }
+      f.enable();
+      const first = await collect(f.ctx.llm.stream(compactRequest([user('first'), instruction()])));
+      const message = framed(committed(first.blocks()));
+      const imageHistory = createUserMessage({ source: { kind: 'user' }, content: nested
+        ? [{ type: 'tool-result', toolCallId: 'image-call', content: [block()] }] : [block()] });
+      const messages = [message, imageHistory, ...(purpose === 'compaction' ? [instruction()] : [])];
+      const before = JSON.stringify(messages);
+      const result = await attempt(f.ctx, { provider: STANDARD_ROUTE, model: ASTRA.id, sessionId: 's1', purpose, messages });
+      assert.equal(result.finish.kind, 'stop');
+      assert.equal(result.blocks()[0].text, 'fixture continued');
+      assert.equal(f.fake.calls.length, 2, 'exactly one reader request after initial seed');
+      const call = f.fake.calls.at(-1);
+      assert.equal(call.mode, 'stream', 'mixed history is read, never sent to text-only native compact');
+      assert.equal(call.replay.length, 1);
+      const images = call.context.messages.flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'image') : []);
+      assert.equal(images.length, 1);
+      assert.equal(images[0].data, expectedData.toString('base64'));
+      assert.equal(images[0].mimeType, expectedMediaType);
+      if (!durable) {
+        assert.equal(attachments.reads.length, 1);
+        assert.deepEqual(attachments.reads[0].policy, { maxPixels: 4194304, maxBytes: 1048576 }, 'pinned stock image-version budgets');
+      }
+      assert.equal(JSON.stringify(messages), before, 'durable messages are never rewritten');
+      assert.equal(f.hostCalls.length, 0, 'opaque state never reaches stock adapter');
+      if (purpose === 'compaction') {
+        assert.equal(call.context.messages.at(-1).content.startsWith(BASIC_INSTRUCTION_FIRST_LINE), true);
+        assert.equal(f.ctx.codexBridge.nativePreferenceStatus('s1').lastAttempt.outcome, 'reader-text');
+      }
+    });
+  }
+}
+
+for (const purpose of ['generation', 'compaction']) {
+  test(`mixed ${purpose} retains the stock 20MiB request-image bound`, async t => {
+    const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA] } });
+    const attachments = fakeAttachments();
+    const read = attachments.readImageRequest;
+    // Synthetic 1MiB request versions test aggregate base64 accounting only;
+    // real decoding/normalization is covered by the LocalAttachmentStore cases.
+    const data = Buffer.alloc(1024 * 1024, 1);
+    attachments.readImageRequest = async (...args) => ({ ...await read(...args), data, bytes: data.length });
+    f.ctx.provide('attachments', attachments);
+    f.enable();
+    const seed = await collect(f.ctx.llm.stream(compactRequest([user('seed'), instruction()])));
+    const history = createUserMessage({ source: { kind: 'user' }, content: Array.from({ length: 16 }, imageBlock) });
+    const before = JSON.stringify(history);
+    const messages = [framed(committed(seed.blocks())), history, ...(purpose === 'compaction' ? [instruction()] : [])];
+    const result = await attempt(f.ctx, { provider: STANDARD_ROUTE, model: ASTRA.id, sessionId: 's1', purpose, messages });
+    assert.equal(result.finish.kind, 'stop');
+    const images = f.fake.calls.at(-1).context.messages.flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'image') : []);
+    assert.equal(images.length, 14, 'only the newest images fitting the stock bound stay inline');
+    assert.equal(JSON.stringify(history), before, 'offloading is request-local, not a history rewrite');
+    assert.equal(f.hostCalls.length, 0);
+  });
+}
+
+for (const purpose of ['generation', 'compaction']) {
+  for (const scenario of ['no-attachments', 'missing-image', 'text-only-model', 'identity', 'malformed-carrier', 'image-in-carrier', 'cancelled', 'reader-failure']) {
+    test(`mixed ${purpose} fails closed on ${scenario}`, async t => {
+      const seeded = await fixture(t, { runtimeOptions: { customModels: [ASTRA] } });
+      seeded.enable();
+      const first = await collect(seeded.ctx.llm.stream(compactRequest([user('seed'), instruction()])));
+      let carrier = framed(committed(first.blocks()));
+      const f = await fixture(t, { runtimeOptions: { customModels: [scenario === 'text-only-model' ? { ...ASTRA, input: ['text'] } : ASTRA],
+        ...(scenario === 'identity' ? { identity: 'wrong-account' } : {}),
+        ...(scenario === 'reader-failure' ? { fail: 'CODEX_RUNTIME_HTTP_503' } : {}) } });
+      f.enable();
+      if (scenario !== 'no-attachments') {
+        const attachments = fakeAttachments();
+        if (scenario === 'missing-image') attachments.readImageRequest = async () => { throw Object.assign(new Error('synthetic missing attachment'), { code: 'ATTACHMENT_NOT_FOUND' }); };
+        f.ctx.provide('attachments', attachments);
+      }
+      if (scenario === 'malformed-carrier') carrier = framed(`${CODEC_PREFIX}-v1>bad-json</dsh-codex-compaction-v1>`);
+      if (scenario === 'image-in-carrier') carrier = { ...carrier, content: [...carrier.content, imageBlock()] };
+      const messages = [carrier, createUserMessage({ source: { kind: 'user' }, content: [imageBlock()] }), ...(purpose === 'compaction' ? [instruction()] : [])];
+      const before = JSON.stringify(messages);
+      const controller = new AbortController();
+      if (scenario === 'cancelled') controller.abort();
+      let result, error;
+      try { result = await attempt(f.ctx, { provider: STANDARD_ROUTE, model: ASTRA.id, sessionId: 's1', purpose, messages, signal: controller.signal }); }
+      catch (caught) { error = caught; }
+      assert.ok(error || result?.finish.kind === 'error', 'must not produce a successful summary or response');
+      assert.equal(f.hostCalls.length, 0, 'no stock fallback after image/identity/reader failure');
+      assert.equal(f.fake.calls.length, scenario === 'reader-failure' ? 1 : 0, 'no request on invalid input and no retry on failed reader-text');
+      assert.equal(f.fake.closed, f.fake.opened, 'all opened owner leases closed');
+      assert.equal(JSON.stringify(messages), before);
+      if (purpose === 'compaction' && scenario !== 'cancelled') {
+        assert.equal(f.ctx.codexBridge.nativePreferenceStatus('s1').lastAttempt.outcome, 'failed');
+      }
+    });
+  }
+}
 
 test('inapplicable route or model stays untouched and records the concrete reason', async t => {
   const inapplicable = await fixture(t, { runtimeOptions: { customModels: [ASTRA], applicable: false, applicabilityReason: 'ROUTE_ENDPOINT' } });

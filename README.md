@@ -2,10 +2,13 @@
 
 [中文](README.zh.md)
 
-**`0.3.2` + account owner `5.1.3`** separates ordinary setup and total request deadlines
-and raises the replay/text idle allowance. Both packages must be updated for the complete fix.
-Tag identity and tag-installation results are recorded in the release; current-host acceptance
-is recorded separately. Neither publication nor current-host acceptance is claimed here.
+**`0.3.3`** repairs user/tool-image replay alongside native checkpoints and adds
+owner-bound reader-text summarization for mixed histories. It uses the published Pi
+configuration defaults, including image pixel/byte budgets, with real attachment-store
+regressions. No account update is required beyond the existing **`5.1.3`** companion.
+The `0.3.2` + `5.1.3` deadline corrections are retained. The repaired runtime passed an
+authorized original-session replay; mixed Basic summarization is separately covered by
+isolated integration tests. Exact tag identity and tag-installation results belong in the release.
 
 This pair retains the historical recovery correction from `0.3.1` + `5.1.2`.
 The stock official `BasicCompactionEngine` stays the primary
@@ -19,16 +22,16 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 --help
 ```
 
 - The installer requires the exact tested `dsh` CLI **`0.1.2-rc.1`** on PATH and delegates
@@ -69,8 +72,14 @@ npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.2 --help
      text fallback — same account, model and endpoint, never stacked or renewed.
      Cancellation, expired leases, identity/protocol errors and invalid checkpoints do
      not trigger recovery. Histories with native carriers never fall back to text.
-   - **Image histories are not taken over** in this first release; they keep the stock
-     text path. Native carriers mixed with unsupported media are rejected explicitly.
+   - **Image replay repair (0.3.3):** ordinary native-reader requests support user
+     and tool-result images through the host's durable attachment service and public Pi
+     conversion. Image-only histories still use stock Basic. Mixed native-carrier/image
+     histories use one owner-bound **reader-text** summarization request with Basic's
+     instruction, then Basic commits a readable text summary. This is an intentional
+     mode, not a failure fallback or native image compaction; the v1 codec stays text-only.
+     Missing attachments, text-only models, invalid media roles and damaged carriers
+     still fail closed. Host image projection/offloading limits remain unchanged.
    - **Semantic recall is lossy, distinct from safety refusals.** A native checkpoint
      replays a compacted summary, not the original conversation: the envelope format
      and the replay chain can be entirely valid and the model may still answer that it

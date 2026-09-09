@@ -12,6 +12,7 @@ const attemptText = attempt => {
   if (attempt.outcome === 'running' || attempt.outcome === 'retrying') return `${attempt.kind} ${attempt.outcome} at ${when} (model ${attempt.model}); no completed summary yet`;
   if (attempt.outcome === 'failed') return `${attempt.kind} attempt FAILED at ${when} (native cause ${attempt.cause}; final ${attempt.failure ?? attempt.cause}; model ${attempt.model})`;
   if (attempt.kind === 'native' && attempt.outcome === 'native') return `native summarization streamed at ${when} (model ${attempt.model}; durable only after basic commits)`;
+  if (attempt.kind === 'reader-text' && attempt.outcome === 'reader-text') return `IMAGE HISTORY read natively into a text summary at ${when} (model ${attempt.model}; not a failure fallback; durable only after basic commits)`;
   if (attempt.kind === 'fallback') return `TEXT FALLBACK output completed at ${when} after recoverable native failure ${attempt.cause} (model ${attempt.model}; history replacement still requires basic commit)`;
   return `not taken over at ${when} (${attempt.reason}; model ${attempt.model})`;
 };
