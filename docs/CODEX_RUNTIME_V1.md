@@ -131,6 +131,14 @@ Samples do not include ids, bodies, account data, credentials or opaque native s
   Stage-specific fields may be absent. The consumer accepts only nonnegative safe integers
   for counts/timings and fixed owner-selected enums for phase/event/timeout kind. Request counts cover the lease; response counters cover
   the latest request. No raw event name, id, URL, body or credential is returned.
+- Proposed owner 5.1.5 adds SDK stream terminal phases `completed`, `failed`, `cancelled`,
+  `timed-out`, recorded before freeze. Compaction 0.4.0 accepts these optional enums;
+  older consumers may omit the whole snapshot for unknown phases without changing execution.
+  SDK stream snapshots omit unavailable body/event counters and related timings; missing is
+  unknown, not zero. Normalized SDK events are never counted as native wire events. Native
+  compact retains its existing wire diagnostics. A transport terminal state alone does not
+  prove Basic validated or committed a summary. Consumer status samples after completion;
+  it is not a real-time progress subscription.
 - `close()` cancels/releases the operation, idempotently; it freezes the diagnostic clock.
 
 The provider owns native message/tool conversion, exact placeholder expansion, the

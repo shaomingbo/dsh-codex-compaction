@@ -2,7 +2,13 @@
 
 [中文](README.zh.md)
 
-**`0.3.3`** repairs user/tool-image replay alongside native checkpoints and adds
+**0.4.0 unreleased candidate (based on 0.3.3):** `/codex-native reader-text` explicitly
+re-summarizes retained native client history through the same owner; `/codex-context`
+adds pressure/benefit diagnostics. Defaults remain unchanged. This working-tree feature
+is not a published tag or production deployment. Commands below are for the future tag only.
+See [usage, boundaries and regression evidence](docs/COMPACTION_BENEFIT.md).
+
+**Historical `0.3.3`** repairs user/tool-image replay alongside native checkpoints and adds
 owner-bound reader-text summarization for mixed histories. It uses the published Pi
 configuration defaults, including image pixel/byte budgets, with real attachment-store
 regressions. No account update is required beyond the existing **`5.1.3`** companion.
@@ -22,29 +28,30 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 --help
 ```
 
-- The installer requires the exact tested `dsh` CLI **`0.1.2-rc.1`** on PATH and delegates
+- The installer requires the exact `dsh` CLI **`0.1.2-alpha.3` or `0.1.2-rc.1`** on PATH and delegates
   every mutation to the public `dsh plugin` CLI with `--ignore-scripts` (pnpm 11 remove
   uses `--config.ignore-scripts=true`, not its unsupported shorthand). It verifies
   manifest postconditions and reports failures honestly; rc.1 does not promise rollback.
   Only top-level launcher help is probed: plugin help would initialize a profile.
 - **If `dsh` is missing, a different version, or the plugin command fails, the installer
   fails closed with guidance.** There is no direct-manifest fallback. Check
-  `dsh --version`; note the historical PATH CLI `0.1.2-alpha.3` is a different, older
-  build than the tested `0.1.2-rc.1` and is rejected.
-- Companion account package: **`dsh-token-usage` `5.1.3`** from the same
-  release train (`github:shaomingbo/dsh-token-usage#v5.1.3`, after publication). It is a capability companion,
+  `dsh --version`. This exact launcher matrix does not widen the plugin's pinned
+  **0.1.2-rc.1 host packages**, nor identify the version of an already running GUI.
+- Proposed companion for corrected SDK-stream diagnostics: **`dsh-token-usage` `5.1.5`**
+  (`github:shaomingbo/dsh-token-usage#v5.1.5`, only after publication and acceptance).
+  Older compatible owners still execute, but their stale/missing diagnostics are not fixed by this consumer. It is a capability companion,
   not a registry dependency: this package never guesses account versions and instead
   preflights the `codex-runtime/v1` protocol and auth owner at runtime. Adjacent/older
   DSH versions are unsupported or unknown; only what the CI matrix runs is claimed.

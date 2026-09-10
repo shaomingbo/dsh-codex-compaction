@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_SOURCE, PACKAGE_NAME, SUPPORTED_DSH_VERSION } from '../src/profile-adapter.js';
+import { DEFAULT_SOURCE, PACKAGE_NAME } from '../src/profile-adapter.js';
 import { parseArgs } from '../bin/install.js';
 
 const installer = fileURLToPath(new URL('../bin/install.js', import.meta.url));
@@ -18,7 +18,7 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(args) + '\\n');
 const mode = process.env.FAKE_MODE;
 if (args.length === 1 && args[0] === '--version') {
-  console.log(process.env.FAKE_VERSION || '${SUPPORTED_DSH_VERSION}');
+  console.log(process.env.FAKE_VERSION || '0.1.2-rc.1');
   process.exit(mode === 'version-fail' ? 9 : 0);
 }
 if (args.length === 1 && args[0] === '--help') {
@@ -111,6 +111,21 @@ test('first/repeat install and uninstall use exact public argv and preserve unre
   ]);
 });
 
+test('exact alpha.3 CLI uses the same public transaction without broad version acceptance', (t) => {
+  const f = fixture(t);
+  const env = { FAKE_VERSION: '0.1.2-alpha.3' };
+  ok(f.run(['status'], env));
+  assert.equal(existsSync(f.home), false);
+  ok(f.run([], env));
+  const installed = f.raw();
+  ok(f.run(['install'], env));
+  ok(f.run(['status'], env));
+  assert.equal(f.raw(), installed);
+  ok(f.run(['uninstall'], env));
+  ok(f.run(['uninstall'], env));
+  assert.equal(mutations(f).length, 2);
+});
+
 test('public CLI initializes absent profile; installer normalizes explicit relative links', (t) => {
   const f = fixture(t);
   ok(f.run(['--profile', 'sandbox_1', '--source', 'link:./local plugin']));
@@ -175,7 +190,7 @@ test('wrong, unknown or failed version never mutates existing manifest', (t) => 
   const f = fixture(t);
   f.seed({ marker: 'retain' });
   const before = f.raw();
-  for (const version of ['0.1.2-alpha.3', '0.1.2-rc.2', '0.1.2', 'unknown', 'dsh 0.1.2-rc.1']) fails(f.run([], { FAKE_VERSION: version }), /Unsupported dsh CLI version/);
+  for (const version of ['0.1.2-alpha.2', '0.1.2-alpha.4', '0.1.2-rc.2', '0.1.2', 'unknown', 'dsh 0.1.2-rc.1']) fails(f.run([], { FAKE_VERSION: version }), /Unsupported dsh CLI version/);
   fails(f.run([], { FAKE_MODE: 'version-fail' }), /Cannot determine/);
   assert.equal(f.raw(), before);
   assert.deepEqual(mutations(f), []);

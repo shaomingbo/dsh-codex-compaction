@@ -39,6 +39,15 @@ test('optional owner deadline diagnostics retain only safe budgets and setup/tot
   assert.deepEqual(operationDiagnostic(undefined, { diagnostics: zero }), zero);
 });
 
+test('SDK stream terminal phases retain unknown counters as absent, not zero', () => {
+  for (const phase of ['completed', 'failed', 'cancelled', 'timed-out']) {
+    const expected = { version: 1, phase, elapsedMs: 2000, requests: 1, httpStatus: 200 };
+    const actual = operationDiagnostic(undefined, { diagnostics: { ...expected, rawBody: 'SECRET', exception: 'SECRET' } });
+    assert.deepEqual(actual, expected);
+    for (const key of ['responseBytes', 'chunks', 'events', 'eventCounts']) assert.equal(Object.hasOwn(actual, key), false);
+  }
+});
+
 test('diagnostic extension is optional and cannot replace an owner failure', () => {
   assert.equal(operationDiagnostic({ operation: {} }), undefined);
   assert.equal(operationDiagnostic({ operation: { diagnostics: () => { throw new Error('SECRET'); } } }), undefined);

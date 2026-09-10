@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0 (unreleased candidate) — explicit reader-text and compaction benefit
+
+- Add restart-safe `/codex-native reader-text` on applicable standard routes. It uses
+  one owner-bound stream with native replay and Basic's complete instruction, including
+  text-only histories. `/codex-native on` restores native output; defaults are unchanged.
+- Reader failures do not try native compact or the stock adapter, and cannot commit a
+  summary. Identity, protocol, cancellation, image and legacy guards remain intact.
+- Add bounded metadata-only benefit observation through public session events. Report
+  real replacement/clean-end proof, before/after pressure and anchors, heuristic old
+  span minus framed replacement, duration, step interval, and retained/opaque lengths.
+  Missing or incomparable evidence is unknown; ordinary idle events do not scan history.
+- Preserve Basic's complete instruction and add JSON scalar-type fidelity guidance only
+  for explicit reader-text. A finite real opaque-only fixture recovered all seven facts
+  and types after the correction; this is not a general schema or automatic-policy guarantee.
+- Accept exact CLI 0.1.2-alpha.3 alongside 0.1.2-rc.1; host package pins stay rc.1.
+- Accept optional SDK diagnostic terminal phases failed/cancelled/timed-out. Proposed
+  owner 5.1.5 supplies them and omits unavailable wire counters; older owners remain valid.
+- No core/meter/owner-codec changes, automatic strategy selection, publication or deployment.
+  Real validation and synthetic integration evidence are recorded separately.
+
 ## 0.3.3
 
 Companion remains published `dsh-token-usage` `5.1.3`; no owner contract or codec change.

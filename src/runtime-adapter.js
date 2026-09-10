@@ -136,7 +136,7 @@ export function operationDiagnostic(lease, error) {
   try {
     const raw = lease?.operation?.diagnostics?.() ?? error?.diagnostics;
     const phase = raw?.phase;
-    if (!raw || raw.version !== 1 || !['model-metadata', 'account-binding', 'bound', 'request-prepare', 'waiting-headers', 'waiting-body', 'reading-sse', 'completed'].includes(phase)) return;
+    if (!raw || raw.version !== 1 || !['model-metadata', 'account-binding', 'bound', 'request-prepare', 'waiting-headers', 'waiting-body', 'reading-sse', 'completed', 'failed', 'cancelled', 'timed-out'].includes(phase)) return;
     const data = { version: 1, phase };
     for (const key of ['budgetMs', 'setupBudgetMs', 'totalBudgetMs', 'timeoutBudgetMs', 'elapsedMs', 'metadataMs', 'boundMs', 'requests', 'requestMs', 'requestBytes', 'headersMs', 'httpStatus', 'firstByteMs', 'lastByteMs', 'responseBytes', 'chunks', 'events', 'lastEventMs', 'itemMs', 'completedMs']) {
       const value = raw[key];

@@ -637,3 +637,75 @@ test('a cancelled ON commits no live preference and diverges from nothing after 
   assert.equal(after.effective, now.effective, 'cancelled command must not diverge across restoration');
   assert.equal(after.session, now.session);
 });
+
+test('Web discovery advertises input so native preference arguments are dispatched as commands', async t => {
+  const f = await commandFixture(t, { runtimeOptions: { customModels: [ASTRA] } });
+  const descriptor = f.ctx.commands.list(f.agent).find(command => command.name === 'codex-native');
+  assert.deepEqual(descriptor.input, { hint: 'on | off | inherit | reader-text | status' });
+  assert.equal(f.fake.calls.length, 0);
+  assert.equal(f.hostCalls.length, 0);
+});
+
+// Explicit reader-text is a deliberate strategy, not native failure recovery.
+test('reader-text preference persists and selects one owner stream without native compact', async t => {
+  const f = await commandFixture(t, { runtimeOptions: { customModels: [ASTRA] } });
+  assert.equal((await f.command('/codex-native reader-text')).result.kind, 'success');
+  const restored = f.ctx.sessions.create(undefined, { seed: JSON.parse(JSON.stringify(f.agent.session.snapshotEvents())) });
+  const result = await collect(f.ctx.llm.stream(compactRequest([user('Preserve exact safety constraints.'), instruction()], { session: restored.id })));
+  assert.equal(result.finish.kind, 'stop');
+  assert.equal(f.fake.calls.length, 1);
+  assert.equal(f.fake.calls[0].mode, 'stream');
+  assert.equal(f.fake.calls[0].context.messages.at(-1).content.startsWith(BASIC_INSTRUCTION_FIRST_LINE), true);
+  assert.equal(f.hostCalls.length, 0);
+  const state = f.ctx.codexBridge.nativePreferenceStatus(restored.id);
+  assert.equal(state.session, 'reader-text');
+  assert.equal(state.summarizationMode, 'reader-text');
+  assert.equal(state.lastAttempt.reason, 'explicit-reader-text');
+  assert.equal((await f.command('/codex-native on')).result.kind, 'success');
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).summarizationMode, 'native');
+});
+
+test('reader-text handles existing text-only native carrier without rewriting input or stock fallback', async t => {
+  const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA] } });
+  f.enable();
+  const first = await collect(f.ctx.llm.stream(compactRequest([user('seed'), instruction()])));
+  const messages = [framed(committed(first.blocks())), user('current work'), instruction()];
+  const original = JSON.stringify(messages);
+  f.ctx.codexBridge.setNativePreference('s1', 'reader-text');
+  const result = await collect(f.ctx.llm.stream(compactRequest(messages)));
+  assert.equal(result.finish.kind, 'stop');
+  assert.equal(f.fake.calls.length, 2);
+  assert.equal(f.fake.calls[1].mode, 'stream');
+  assert.equal(f.fake.calls[1].replay.length, 1);
+  const readerInstruction = f.fake.calls[1].context.messages.at(-1).content;
+  assert.equal(readerInstruction.startsWith(messages.at(-1).content[0].text + '\n\n'), true, 'keep the complete Basic instruction verbatim before the reader-only note');
+  assert.match(readerInstruction, /original scalar types/);
+  assert.match(readerInstruction, /JSON literals/);
+  assert.equal(f.hostCalls.length, 0);
+  assert.equal(JSON.stringify(messages), original);
+  assert.equal(f.fake.closed, f.fake.opened);
+});
+
+for (const scenario of ['inapplicable', 'unrecognized-tail', 'failed-reader', 'missing-owner']) {
+  test(`explicit reader-text fails closed without a carrier on ${scenario}`, async t => {
+    const f = await fixture(t, { withOwner: scenario !== 'missing-owner', runtimeOptions: { customModels: [ASTRA],
+      ...(scenario === 'inapplicable' ? { applicable: false } : {}),
+      ...(scenario === 'failed-reader' ? { fail: 'CODEX_RUNTIME_HTTP_503' } : {}) } });
+    f.ctx.codexBridge.setNativePreference('s1', 'reader-text');
+    const messages = [user('work'), ...(scenario === 'unrecognized-tail' ? [] : [instruction()])];
+    await assert.rejects(attempt(f.ctx, compactRequest(messages)));
+    assert.equal(f.hostCalls.length, 0);
+    assert.equal(f.fake.calls.length, scenario === 'failed-reader' ? 1 : 0);
+    assert.equal(f.fake.closed, f.fake.opened);
+  });
+}
+
+test('reader-text command rejects an inapplicable or nonstandard route without persisting', async t => {
+  const f = await commandFixture(t, { runtimeOptions: { customModels: [ASTRA], applicable: false } });
+  assert.equal((await f.command('/codex-native reader-text')).result.kind, 'error');
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).session, 'inherit');
+  f.fake.runtime.applicability = () => ({ applicable: true });
+  f.agent.options.provider = ROUTE;
+  assert.equal((await f.command('/codex-native reader-text')).result.kind, 'error');
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).session, 'inherit');
+});

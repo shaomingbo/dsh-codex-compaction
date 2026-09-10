@@ -264,6 +264,100 @@ test('official basic commits a native checkpoint for a custom model through the 
   assert.equal(attempt.outcome, 'native');
 });
 
+test('explicit reader-text command re-summarizes a native carrier through real owner and Basic, with benefit evidence', async t => {
+  const f = await standardFixture(t);
+  class Presets extends Service {
+    constructor() { super(f.ctx, 'agentPresets'); }
+    copy() {} read() {} resolve() {} serviceFor() { return f.engine; }
+  }
+  new Presets();
+  await f.ctx.plugin(policy);
+  f.addStandardHistory(); f.enable();
+  await f.engine.compactNow(f.agent, f.signal);
+  assert.equal(f.ctx.codexBridge.compactionProgress(f.agent.session).native.kind, 'observed');
+  const command = await f.ctx.commands.execute(f.agent, '/codex-native reader-text', [], f.signal);
+  assert.equal(command.result.kind, 'success');
+  const before = f.requests.length;
+  await f.engine.compactNow(f.agent, f.signal);
+  assert.equal(f.requests.length, before + 1, 'one reader call, no preliminary native compact');
+  const wire = f.requests.at(-1).body;
+  assert.ok(wire.input.some(item => item.type === 'compaction'));
+  assert.ok(!wire.input.some(item => item.type === 'compaction_trigger'));
+  assert.ok(JSON.stringify(wire).includes('You are now acting as a compaction engine'));
+  assert.ok(!JSON.stringify(wire).includes('<dsh-codex-compaction'));
+  assert.equal(f.hostCalls.length, 0);
+  assert.equal(f.agent.session.deriveMessages().some(isNativeCarrier), false);
+  const benefit = f.ctx.codexBridge.compactionProgress(f.agent.session);
+  assert.equal(benefit.latest.outcome, 'committed');
+  assert.ok(benefit.latest.netFreedTokens > 0, JSON.stringify(benefit));
+  assert.ok(benefit.latest.beforePressure.tokens > benefit.latest.afterPressure.tokens);
+  assert.equal(benefit.native.kind, 'absent');
+  const context = await f.ctx.commands.execute(f.agent, '/codex-context', [], f.signal);
+  assert.match(context.result.text, /Compaction benefit: committed/);
+  assert.match(context.result.text, /old span size, not net freed/);
+  assert.doesNotMatch(JSON.stringify(benefit), /encrypted_content|standard-fixture-account|opaque-standard-fixture/);
+});
+
+for (const [mode, retries, expectedRequests] of [['on', 1, 6], ['on', 0, 3], ['reader-text', 1, 1]]) {
+  test(`retained-client plateau: ${mode}, retries=${retries} makes ${expectedRequests} requests across three pressure checks`, async t => {
+    const f = await standardFixture(t, { deferEngine: true, nativeReply: async ({ fetches }) => sse([
+      { type: 'response.output_item.done', item: { type: 'compaction', encrypted_content: 'o'.repeat(24000 - fetches * 1000) } },
+      { type: 'response.completed', response: { status: 'completed' } },
+    ]) });
+    const session = f.agent.session;
+    const lease = await f.runtime.open({ model: ASTRA });
+    const envelope = f.runtime.encodeCheckpoint({ ...lease.binding, items: [
+      ...Array.from({ length: 76 }, (_, i) => ({ role: 'user', content: [{ type: 'input_text', text: `Report ${i}: ` + 'x'.repeat(3350) }] })),
+      { type: 'compaction', encrypted_content: 'o'.repeat(24000) },
+    ] });
+    lease.close();
+    session.append('request/header', { header: { config: f.agent.options, system: 'fixture system '.repeat(4000) }, reason: 'initial' });
+    const turn = 0;
+    session.append('turn/start', { turn });
+    session.append('user/message', createUserMessage({ source: { kind: 'plugin', plugin: 'compact', compactionId: 'fixture-plateau' }, content: [{ type: 'text', text: envelope }] }), { surfaceOp: 'append' });
+    for (const step of [0, 1]) {
+      session.append('step/start', { turn, step });
+      session.append('assistant/message', { turn, step,
+        message: createAssistantMessage({ source: f.agent.options, content: [{ type: 'text', text: step ? 'tail'.repeat(44000) : 'old work '.repeat(2400) }] }),
+        ...(step ? { usage: { inputTokens: 224000, outputTokens: 1000, totalTokens: 225000 } } : {}),
+      }, { surfaceOp: 'append' });
+      session.append('step/end', { turn, step });
+    }
+    const engine = f.makeEngine({ auto: false, thresholdRatio: 217600 / 872000, retainTokens: 44000, compactionRetries: retries });
+    f.enable(mode);
+    assert.equal(f.ctx.tokenMeter.measure(session).totalTokens, 225000, 'synthetic usage anchor, not live provider measurement');
+    for (let step = 0; step < 3; step++) {
+      if (mode === 'on') await assert.rejects(engine.compactIfNeeded(f.agent, 'pressure', f.signal), /still above threshold/);
+      else await engine.compactIfNeeded(f.agent, 'pressure', f.signal);
+      assert.equal(f.ctx.tokenMeter.measure(session).totalTokens < 217600, mode === 'reader-text');
+      session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'new work '.repeat(220) }] }), { surfaceOp: 'append' });
+    }
+    assert.equal(f.requests.length, expectedRequests);
+    assert.equal(f.hostCalls.length, 0);
+    const measured = f.ctx.codexBridge.compactionProgress(session);
+    assert.equal(measured.latest.outcome, 'committed');
+    assert.ok(measured.latest.netFreedTokens > 0);
+    assert.equal(measured.native.kind, mode === 'reader-text' ? 'absent' : 'observed');
+    if (mode === 'on') assert.equal(measured.native.clients, 76);
+  });
+}
+
+test('explicit reader-text failure leaves the real Basic surface untouched and records failed benefit', async t => {
+  const f = await standardFixture(t, { ordinaryReply: async () => new Response('synthetic error', { status: 503 }) });
+  f.addStandardHistory(); f.enable();
+  await f.engine.compactNow(f.agent, f.signal);
+  const before = JSON.stringify(f.agent.session.deriveMessages());
+  f.enable('reader-text');
+  const requests = f.requests.length;
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal));
+  assert.equal(f.requests.length, requests + 1);
+  assert.equal(JSON.stringify(f.agent.session.deriveMessages()), before);
+  assert.equal(f.hostCalls.length, 0);
+  const benefit = f.ctx.codexBridge.compactionProgress(f.agent.session);
+  assert.equal(benefit.latest.outcome, 'failed');
+  assert.equal(benefit.latest.netFreedTokens, null);
+});
+
 test('committed native state replays through the standard route on later ordinary requests', async t => {
   const f = await standardFixture(t);
   f.addStandardHistory();

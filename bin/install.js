@@ -2,7 +2,7 @@
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_SOURCE, PACKAGE_NAME, SUPPORTED_DSH_VERSION, normalizeSource, runProfileAction, validateProfile } from '../src/profile-adapter.js';
+import { DEFAULT_SOURCE, PACKAGE_NAME, SUPPORTED_DSH_VERSIONS, normalizeSource, runProfileAction, validateProfile } from '../src/profile-adapter.js';
 
 export function parseArgs(argv) {
   const options = { command: 'install', profile: 'web', source: DEFAULT_SOURCE };
@@ -38,7 +38,9 @@ No command means install. Default profile: web.
                 or explicit link:<local-path> (relative to the invoking directory)
   -h, --help    Show help without requiring dsh or accessing a profile
 
-Requires exactly dsh ${SUPPORTED_DSH_VERSION} on PATH and pnpm. Check dsh --version.
+Requires dsh ${SUPPORTED_DSH_VERSIONS.join(' or ')} (exact) on PATH and pnpm.
+Host packages remain pinned to 0.1.2-rc.1; the CLI version does not identify a running GUI.
+Check dsh --version.
 All dependency operations pass --ignore-scripts. No direct manifest writes or fallback.
 The fixed release tag is a candidate; its publication is not assumed.
 The public CLI owns transactions; a failure does not guarantee dependency rollback.

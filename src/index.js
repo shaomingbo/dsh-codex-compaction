@@ -1,7 +1,7 @@
 import { assertPolicyCompatibility } from './compatibility.js';
 import { setupPreset } from './preset-setup.js';
 import { blocksCarryNativeEnvelope } from './native-checkpoint.js';
-import { PLUGIN, failure } from './constants.js';
+import { PLUGIN, STANDARD_ROUTE, failure } from './constants.js';
 
 export const name = PLUGIN;
 export const inject = ['commands', 'agentPresets', 'codexBridge'];
@@ -12,7 +12,7 @@ const attemptText = attempt => {
   if (attempt.outcome === 'running' || attempt.outcome === 'retrying') return `${attempt.kind} ${attempt.outcome} at ${when} (model ${attempt.model}); no completed summary yet`;
   if (attempt.outcome === 'failed') return `${attempt.kind} attempt FAILED at ${when} (native cause ${attempt.cause}; final ${attempt.failure ?? attempt.cause}; model ${attempt.model})`;
   if (attempt.kind === 'native' && attempt.outcome === 'native') return `native summarization streamed at ${when} (model ${attempt.model}; durable only after basic commits)`;
-  if (attempt.kind === 'reader-text' && attempt.outcome === 'reader-text') return `IMAGE HISTORY read natively into a text summary at ${when} (model ${attempt.model}; not a failure fallback; durable only after basic commits)`;
+  if (attempt.kind === 'reader-text' && attempt.outcome === 'reader-text') return `${attempt.reason === 'explicit-reader-text' ? 'EXPLICIT READER-TEXT' : 'IMAGE HISTORY'} read natively into a text summary at ${when} (model ${attempt.model}; not a failure fallback; durable only after basic commits)`;
   if (attempt.kind === 'fallback') return `TEXT FALLBACK output completed at ${when} after recoverable native failure ${attempt.cause} (model ${attempt.model}; history replacement still requires basic commit)`;
   return `not taken over at ${when} (${attempt.reason}; model ${attempt.model})`;
 };
@@ -20,6 +20,19 @@ const attemptText = attempt => {
 const diagnosticText = status => status?.lastAttempt?.diagnostics
   ? `Diagnostic v1 (timings in ms from lease start): ${JSON.stringify(status.lastAttempt.diagnostics)}`
   : 'Diagnostic v1: no phase sample yet.';
+
+const progressText = sample => {
+  const last = sample?.latest;
+  const pressure = value => value ? `~${value.tokens} (${value.baseline} anchor)` : 'unknown';
+  const observed = last
+    ? `Compaction benefit: ${last.outcome}; pressure ${pressure(last.beforePressure)} -> ${pressure(last.afterPressure)}; old span ~${last.shadowedTokens ?? '?'}; framed replacement ~${last.framedReplacementTokens ?? '?'}; net saved ~${last.netFreedTokens ?? '?'} heuristic tokens (${last.comparison.basis}${last.comparison.reason ? `: ${last.comparison.reason}` : ''}); interval ${last.stepInterval ?? '?'} steps; duration ${last.durationMs ?? '?'}ms.`
+    : 'Compaction benefit: no live observation yet; restart does not invent historical pre/post measurements.';
+  const native = sample?.native;
+  const footprint = native?.kind === 'observed'
+    ? `Native footprint: ${native.carriers} carriers, ${native.clients} retained client messages, ${native.retainedUtf16Units} retained text UTF-16 units, ${native.opaqueUtf16Units} opaque UTF-16 units (lengths, NOT provider token counts).`
+    : `Native footprint: ${native?.kind ?? 'unavailable'}.`;
+  return `${observed}\n${footprint}\nShadowed tokens are the old span size, not net freed space. Logical replacement is not a claim of disk persistence or sufficient remaining capacity.`;
+};
 
 const recoveryText = status => (status?.recovery ?? []).map(entry =>
   `Recovery ${entry.provider}/${entry.model}: ${entry.failures} consecutive failures; ${entry.inFlight ? 'request in flight' : entry.coolingDown ? `deferred until ${new Date(entry.nextAllowedAt).toISOString()}` : 'next official trigger may attempt'}${entry.lastFailure ? `; last failure ${entry.lastFailure}` : ''}.`
@@ -73,13 +86,14 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => ctx.commands.register({
     name: 'codex-native',
     description: 'Per-session native Codex compaction preference for standard openai-codex sessions',
+    input: { hint: 'on | off | inherit | reader-text | status' },
     // recordInput stays enabled: the persisted command/run arguments are the
     // only restart-safe store for this per-session preference (see
     // src/preference-recovery.js — no plugin event type may enter a session log).
     async handler(invocation) {
       const argument = invocation.rawInput.trim();
-      if (!['', 'on', 'off', 'inherit', 'status'].includes(argument)) {
-        return { kind: 'error', text: 'Usage: /codex-native [on|off|inherit|status]' };
+      if (!['', 'on', 'off', 'inherit', 'reader-text', 'status'].includes(argument)) {
+        return { kind: 'error', text: 'Usage: /codex-native [on|off|inherit|reader-text|status]' };
       }
       const session = invocation.agent?.session;
       if (!session?.id) return { kind: 'error', text: 'This command needs a live session.' };
@@ -98,6 +112,9 @@ export function apply(ctx, config = {}) {
       if (invocation.signal?.aborted) {
         return { kind: 'error', text: 'The preference command was cancelled before it could commit; nothing changed.' };
       }
+      if (argument === 'reader-text' && (target.provider !== STANDARD_ROUTE || !applicability.applicable)) {
+        return { kind: 'error', text: 'Reader-text requires an applicable standard openai-codex route and its Accounts native reader; no preference changed.' };
+      }
       if (argument && argument !== 'status') ctx.codexBridge.setNativePreference(session.id, argument);
       const status = ctx.codexBridge.nativePreferenceStatus(session.id);
       const preference = `Profile default: ${status.profile ? 'on' : 'off'}. Session: ${status.session}. Effective: ${status.effective ? 'ON' : 'OFF'}.`;
@@ -107,7 +124,8 @@ export function apply(ctx, config = {}) {
           : `Native applicability for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}). Requests stay on the original path.`)
         : 'No routed model yet; native applicability unknown until a request selects a model.';
       const history = `Last summarization attempt: ${attemptText(status.lastAttempt)}.`;
-      return { kind: 'success', text: [`Native Codex compaction preference.`, preference, readiness, history, recoveryText(status), diagnosticText(status),
+      const mode = `Summarization mode: ${status.summarizationMode}. Reader-text replays native state through the same owner into a text summary; it applies to the next official compaction, not ordinary generation. Use /compact while idle to request it now; /codex-native on returns to native output. No automatic strategy switch is enabled.`;
+      return { kind: 'success', text: [`Native Codex compaction preference.`, preference, mode, readiness, history, recoveryText(status), diagnosticText(status),
         'Profile enablement is a reviewed rollout step; OFF only stops new native creation, existing native state stays readable.'].join('\n') };
     },
   }));
@@ -135,10 +153,12 @@ export function apply(ctx, config = {}) {
               ? `Native readiness for ${target.provider ?? 'openai-codex'}/${target.model}: ready.`
               : `Native readiness for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}); text path continues unchanged.`)
               : 'Native readiness: unknown until a model is routed.',
+            `Summarization mode: ${status.summarizationMode}.`,
             `Last attempt: ${attemptText(status.lastAttempt)}.`].join('\n')
           : 'Native preference: no live session.';
         const committed = session ? `Observed compaction result: ${committedText(session)}.` : 'Observed compaction result: no live session.';
-        return { kind: 'success', text: [auto, native, recoveryText(status), diagnosticText(status), committed,
+        const benefit = progressText(ctx.codexBridge.compactionProgress(session));
+        return { kind: 'success', text: [auto, native, recoveryText(status), diagnosticText(status), benefit, committed,
           'A streamed native summary counts only after official basic replaces history in the session log; this status observes that logical replacement and does not independently confirm host-owned disk persistence.'].join('\n') };
       }
       return { kind: 'error', text: 'No compaction engine serves this session. Start a standard openai-codex session to see basic automatic compaction and native readiness; the legacy structured preset is compatibility-only.' };

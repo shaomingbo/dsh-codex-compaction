@@ -40,6 +40,17 @@ async function* completedText(chunks, failureCode) {
   if (!terminal) throw failure(failureCode, 'Owner-bound text summary ended without a successful finish.');
 }
 
+// Add fidelity guidance only to explicit reader-text requests. Preserve Basic's
+// instruction verbatim and never mutate a caller-owned message or native carrier.
+const READER_FIDELITY_NOTE = 'Reader-text fidelity note (dsh-codex-compaction): Within the existing Critical Context section, preserve important structured facts as compact JSON literals with their original scalar types. Keep numbers, strings, booleans and null distinct; do not coerce a number to a quoted string or vice versa. Do not invent missing values. Keep all of the Basic checkpoint structure and requirements above.';
+function withReaderFidelityNote(options) {
+  const tail = options.messages.at(-1);
+  const block = tail.content[0]; // dispatch has already validated Basic's single text block
+  return { ...options, messages: [...options.messages.slice(0, -1), {
+    ...tail, content: [{ ...block, text: `${block.text}\n\n${READER_FIDELITY_NOTE}` }],
+  }] };
+}
+
 const MAX_ATTEMPTS = 4096;
 
 /** Profile default (RC: off) plus per-session on/off overrides. */
@@ -55,13 +66,13 @@ export class NativeSessionState {
     this.recoverPreference = typeof recoverPreference === 'function' ? recoverPreference : undefined;
   }
   setSession(sessionId, mode) {
-    if (!['on', 'off', 'inherit'].includes(mode)) throw failure('CODEX_NATIVE_PREF_MODE', 'Preference must be on, off, or inherit.');
+    if (!['on', 'off', 'inherit', 'reader-text'].includes(mode)) throw failure('CODEX_NATIVE_PREF_MODE', 'Preference must be on, off, inherit, or reader-text.');
     if (typeof sessionId !== 'string' || !sessionId) throw failure('CODEX_NATIVE_PREF_SESSION', 'A live session is required.');
     // In-process changes are authoritative from here on: no later recovery
     // scan may resurrect a superseded persisted preference for this session.
     this.scanned.add(sessionId);
     if (mode === 'inherit') this.sessions.delete(sessionId);
-    else this.sessions.set(sessionId, mode === 'on');
+    else this.sessions.set(sessionId, mode === 'reader-text' ? mode : mode === 'on');
     return this.nativeStatus(sessionId);
   }
   /** One durable-log scan per unseen session; the verdict is then cached. */
@@ -71,21 +82,22 @@ export class NativeSessionState {
     let value;
     try { value = this.recoverPreference(sessionId); }
     catch { return undefined; }
+    if (value === 'reader-text') { this.sessions.set(sessionId, value); return value; }
     if (value === 'on') { this.sessions.set(sessionId, true); return 'on'; }
     if (value === 'off') { this.sessions.set(sessionId, false); return 'off'; }
     return undefined; // explicit inherit, or no durable preference
   }
   sessionPreference(sessionId) {
     const value = this.sessions.get(sessionId);
-    if (value !== undefined) return value ? 'on' : 'off';
+    if (value !== undefined) return value === 'reader-text' ? value : value ? 'on' : 'off';
     return this.recovered(sessionId) ?? 'inherit';
   }
   effective(sessionId) {
     const value = this.sessions.get(sessionId);
-    if (value !== undefined) return value;
+    if (value !== undefined) return value !== false;
     const recovered = this.recovered(sessionId);
     // A recovered 'off' is an explicit override and survives any profile default.
-    if (recovered === 'on') return true;
+    if (recovered === 'on' || recovered === 'reader-text') return true;
     if (recovered === 'off') return false;
     return this.profileNative;
   }
@@ -96,7 +108,9 @@ export class NativeSessionState {
   lastAttempt(sessionId) { return this.attempts.get(sessionId); }
   nativeStatus(sessionId) {
     return { profile: this.profileNative, session: this.sessionPreference(sessionId),
-      effective: this.effective(sessionId), lastAttempt: this.lastAttempt(sessionId) ?? null,
+      effective: this.effective(sessionId),
+      summarizationMode: this.sessionPreference(sessionId) === 'reader-text' ? 'reader-text' : this.effective(sessionId) ? 'native' : 'off',
+      lastAttempt: this.lastAttempt(sessionId) ?? null,
       recovery: this.recovery.status(sessionId) };
   }
 }
@@ -136,6 +150,7 @@ export class NativeCompactionSeam {
     const images = historyHasImages(options.messages);
     if (options.purpose === 'compaction') {
       const enabled = this.state.effective(sessionId);
+      const explicitReader = this.state.sessionPreference(sessionId) === 'reader-text';
       // Opaque native content may never be summarized through a plain adapter.
       if (carriers.length && !enabled) {
         throw failure('CODEX_NATIVE_READER_REQUIRED', 'Native Codex checkpoints in the compacted region require the native reader; enable /codex-native for this session or use the structured preset.');
@@ -146,36 +161,38 @@ export class NativeCompactionSeam {
       const gate = await this.gate(options.model, signal);
       if (!gate.applicable) {
         this.state.recordAttempt(sessionId, { kind: 'none', reason: `inapplicable:${gate.reason}`, model: options.model });
-        if (carriers.length) {
+        if (carriers.length || explicitReader) {
           throw failure('CODEX_NATIVE_REPLAY_UNAVAILABLE', `Native Codex checkpoints cannot be summarized on this route (${gate.reason}); the request was not sent.`);
         }
         return yield* next();
       }
       if (!basicInstructionTail(options.messages.at(-1))) {
         this.state.recordAttempt(sessionId, { kind: 'none', reason: 'instruction-tail-unrecognized', model: options.model });
-        if (carriers.length) {
+        if (carriers.length || explicitReader) {
           throw failure('CODEX_NATIVE_READER_REQUIRED', 'Native Codex checkpoints in the compacted region require the native reader; this summarization request was not recognized and was not sent.');
         }
         return yield* next();
       }
-      if (images && !carriers.length) {
+      if (images && !carriers.length && !explicitReader) {
         this.state.recordAttempt(sessionId, { kind: 'none', reason: 'images-present', model: options.model });
         return yield* next();
       }
       const history = options.messages.slice(0, -1);
       const recovery = this.state.recovery;
       const flight = recovery.begin({ ...options, sessionId });
-      let lease, cause, kind = images ? 'reader-text' : 'native', outputComplete = false;
-      const record = fields => this.state.recordAttempt(sessionId, { kind, model: options.model, ...(cause ? { cause } : {}), ...fields });
+      const readerText = explicitReader || images;
+      let lease, cause, kind = readerText ? 'reader-text' : 'native', outputComplete = false;
+      const record = fields => this.state.recordAttempt(sessionId, { kind, model: options.model,
+        ...(readerText ? { reason: explicitReader ? 'explicit-reader-text' : 'image-history' } : {}), ...(cause ? { cause } : {}), ...fields });
       record({ outcome: 'running' });
       try {
         lease = await this.adapter.seamLease({ model: options.model, signal });
-        if (images) {
-          // The v1 native compactor/codec is text-only. Its ordinary reader can
-          // replay opaque state alongside images, so ask that SAME bound reader
-          // for Basic's text summary. This is a deliberate one-request mode,
-          // not a failure fallback; never send the envelope to the stock route.
-          yield* completedText(this.adapter.seamStreamOnLease(lease, options), 'CODEX_NATIVE_READER_FAILED');
+        if (readerText) {
+          // Explicit text re-summarization and mixed image histories share the
+          // SAME owner reader. Keep Basic's complete instruction and native wire
+          // replay; this is one deliberate request, never native-then-fallback.
+          // In particular, do not truncate retained clients or edit opaque state.
+          yield* completedText(this.adapter.seamStreamOnLease(lease, explicitReader ? withReaderFidelityNote(options) : options), 'CODEX_NATIVE_READER_FAILED');
           signal?.throwIfAborted();
           outputComplete = true;
           record({ outcome: 'reader-text', diagnostics: operationDiagnostic(lease) });

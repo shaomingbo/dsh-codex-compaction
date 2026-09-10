@@ -4,9 +4,11 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 export const PACKAGE_NAME = 'dsh-codex-compaction';
-export const SUPPORTED_DSH_VERSION = '0.1.2-rc.1';
-export const DEFAULT_SOURCE = 'github:shaomingbo/dsh-codex-compaction#v0.3.3';
-const CLI_GUIDANCE = `Install @deepseek-ai/dsh@${SUPPORTED_DSH_VERSION} and pnpm, put its dsh executable on PATH, then check dsh --version. No manifest fallback is available.`;
+// Launcher versions are distinct from the plugin's pinned rc.1 host packages.
+// This is an exact tested matrix, not a SemVer range or a host-version inference.
+export const SUPPORTED_DSH_VERSIONS = Object.freeze(['0.1.2-alpha.3', '0.1.2-rc.1']);
+export const DEFAULT_SOURCE = 'github:shaomingbo/dsh-codex-compaction#v0.4.0';
+const CLI_GUIDANCE = 'Install @deepseek-ai/dsh@0.1.2-rc.1 (or the tested 0.1.2-alpha.3 launcher) and pnpm, put dsh on PATH, then check dsh --version. Runtime host packages must remain 0.1.2-rc.1. No manifest fallback is available.';
 
 export function validateProfile(profile) {
   if (typeof profile !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(profile)) {
@@ -71,12 +73,12 @@ function checkCli(env, profile) {
   if (!success(version)) throw new Error(`Cannot determine dsh CLI version. ${CLI_GUIDANCE}`);
   // --version is the version contract; never infer command success from prose.
   const actual = version.stdout.trim();
-  if (actual !== SUPPORTED_DSH_VERSION) throw new Error(`Unsupported dsh CLI version ${JSON.stringify(actual)}; require exactly ${SUPPORTED_DSH_VERSION}. ${CLI_GUIDANCE}`);
+  if (!SUPPORTED_DSH_VERSIONS.includes(actual)) throw new Error(`Unsupported dsh CLI version ${JSON.stringify(actual)}; require exactly ${SUPPORTED_DSH_VERSIONS.join(' or ')}. ${CLI_GUIDANCE}`);
   // Do NOT probe `dsh plugin ... --help`: in published rc.1 help is forwarded
   // to pnpm AFTER profile initialization. Only launcher help is read-only.
   // The exact tested CLI version binds the public plugin grammar; mutation
   // availability is checked by its real exit code and manifest postconditions.
-  if (!success(invoke(['--help'], env))) throw new Error(`dsh ${SUPPORTED_DSH_VERSION} lacks the required read-only launcher help capability. ${CLI_GUIDANCE}`);
+  if (!success(invoke(['--help'], env))) throw new Error(`dsh ${actual} lacks the required read-only launcher help capability. ${CLI_GUIDANCE}`);
 }
 
 /** Public CLI owns all writes and dependency transactions, including recovery.

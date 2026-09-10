@@ -7,7 +7,7 @@
 // a matching command/done), which the durable log already persists and the
 // command service guarantees for every /codex-native invocation.
 export const PREFERENCE_COMMAND = 'codex-native';
-const MODES = new Set(['on', 'off', 'inherit']);
+const MODES = new Set(['on', 'off', 'inherit', 'reader-text']);
 
 /**
  * Build a synchronous recovery callback over the live session store.

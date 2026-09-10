@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-compaction",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Official-basic Codex compaction with an optional account-owned native summarization seam and legacy structured reader; no core patches or duplicate login.",
   "type": "module",
   "main": "src/index.js",
@@ -25,7 +25,8 @@
     "docs/ARCHITECTURE.md",
     "docs/CODEX_RUNTIME_V1.md",
     "docs/VALIDATION.md",
-    "docs/RECOVERY_FIX.md"
+    "docs/RECOVERY_FIX.md",
+    "docs/COMPACTION_BENEFIT.md"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",

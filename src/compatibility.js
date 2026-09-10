@@ -31,5 +31,5 @@ export function assertProviderCompatibility(ctx) {
 export function assertPolicyCompatibility(ctx) {
   assertVersions();
   assertMethods(ctx, { commands: ['register'], agentPresets: ['copy', 'read', 'resolve', 'serviceFor'],
-    codexBridge: ['describe', 'compact', 'readCheckpoint', 'estimateCheckpoint', 'setNativePreference', 'nativePreferenceStatus', 'nativeApplicability'] });
+    codexBridge: ['describe', 'compact', 'readCheckpoint', 'estimateCheckpoint', 'setNativePreference', 'nativePreferenceStatus', 'nativeApplicability', 'compactionProgress'] });
 }

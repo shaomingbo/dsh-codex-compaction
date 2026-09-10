@@ -27,8 +27,11 @@ export function apply(ctx, config = {}) {
     profileNative: config.nativeCompaction === true,
     recoverPreference: commandLogPreferenceRecovery(ctx),
   });
-  ctx.on('session/event', (session, event) => bridge.nativeState.recovery.observe(session, event));
-  ctx.on('dispose', () => bridge.nativeState.recovery.clear());
+  ctx.on('session/event', (session, event) => {
+    bridge.progress.observe(session, event);
+    bridge.nativeState.recovery.observe(session, event);
+  });
+  ctx.on('dispose', () => { bridge.nativeState.recovery.clear(); bridge.progress.clear(); });
   ctx.inject(['codexRuntime', 'llm'], ownerCtx => {
     const runtime = requireRuntime(ownerCtx.codexRuntime);
     currentRuntime = runtime;
@@ -48,7 +51,9 @@ export function apply(ctx, config = {}) {
   // Remains when the policy entry is disabled. Whole-package removal still
   // removes this bridge and requires preserving a compatible native reader.
   ctx.on('llm/stream', (options, next) => {
-    if (options.provider === ROUTE || !options.messages.some(isNativeCarrier)) return next();
+    const explicitReader = options.provider === STANDARD_ROUTE && options.purpose === 'compaction'
+      && bridge.nativeState.sessionPreference(options.sessionId) === 'reader-text';
+    if (options.provider === ROUTE || (!explicitReader && !options.messages.some(isNativeCarrier))) return next();
     // The seam (when the account capability is present) owns standard-route
     // carriers after account preparation; nothing else may carry them.
     if (options.provider === STANDARD_ROUTE && seamActive) return next();

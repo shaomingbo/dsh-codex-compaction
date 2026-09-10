@@ -2,7 +2,12 @@
 
 [English](README.md)
 
-**`0.3.3`** 修复原生检查点与用户/工具图片的混合回放，并支持同一 owner 下的混合历史
+**0.4.0 未发布候选（基于 0.3.3）：**新增 `/codex-native reader-text`，显式通过同一 owner
+将原生载荷中保留的历史重整为文本摘要；`/codex-context` 新增压力与收益诊断。默认行为不变。
+这是工作树候选，尚未发布或部署生产；下方命令仅在未来 tag 发布并验收后使用。
+详见[用法、边界与回归证据](docs/COMPACTION_BENEFIT.md)。
+
+**历史版本 `0.3.3`** 修复原生检查点与用户/工具图片的混合回放，并支持同一 owner 下的混合历史
 reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值，补充真实附件服务回归。
 现有账户 owner **`5.1.3`** 即可配套，不要求同步升级账户包；保留 `0.3.2` + `5.1.3` 的期限修正。
 修复运行时代码已通过原失败会话的真实回放；混合 Basic 压缩另有隔离集成证据。
@@ -18,27 +23,28 @@ reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值
 ## 安装（tag 存在后）
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0
 ```
 
 无参数等同 `install`；默认 profile 为 `web`。其他命令：
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.3.3 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 --help
 ```
 
-- 安装器要求 PATH 上存在精确测试过的 `dsh` CLI **`0.1.2-rc.1`**，所有变更都委托给公开
+- 安装器要求 PATH 上存在精确版本 `dsh` CLI **`0.1.2-alpha.3` 或 `0.1.2-rc.1`**，所有变更都委托给公开
   `dsh plugin` CLI 并带 `--ignore-scripts`（pnpm 11 的 remove 用 `--config.ignore-scripts=true`，
   不用其不支持的简写）。安装器核验 manifest 后置条件并如实报告失败；rc.1 不承诺回滚。
   只探测顶层 launcher help：plugin help 会初始化 profile。
 - **`dsh` 缺失、版本不符或 plugin 命令失败时，安装器带指引地失败关闭。** 没有直接改 manifest
-  的 fallback。请用 `dsh --version` 核对；历史上的 PATH CLI `0.1.2-alpha.3` 是另一个更旧的
-  构建版本，会被拒绝。
-- 配套账户包：同一发布系列的 **`dsh-token-usage` `5.1.3`**
-  （发布后使用 `github:shaomingbo/dsh-token-usage#v5.1.3`）。它是能力配套包，不是 registry 依赖：
+  的 fallback。请用 `dsh --version` 核对；这个精确 launcher 矩阵不放宽插件锁定的
+  **0.1.2-rc.1 宿主包**，也不能用 CLI 版本推断正在运行的 GUI 版本。
+- 修正 SDK stream 诊断的拟配套账户包：**`dsh-token-usage` `5.1.5`**
+  （仅发布并验收后使用 `github:shaomingbo/dsh-token-usage#v5.1.5`）。兼容旧 owner 仍可执行，
+  但其陈旧或缺失的诊断不会由 consumer 自动修好。它是能力配套包，不是 registry 依赖：
   本包从不猜测账户版本，而是在运行时预检 `codex-runtime/v1` 协议与认证 owner。相邻/更旧
   的 DSH 版本为不支持或未知；只声明 CI 矩阵实际验证过的范围。
 - Bundle 变更需要用户自行重启对应 profile（Web GUI 需硬刷新）。任何脚本都不会启动、
