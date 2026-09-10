@@ -2,11 +2,10 @@
 
 [中文](README.zh.md)
 
-**0.4.0 unreleased candidate (based on 0.3.3):** `/codex-native reader-text` explicitly
-re-summarizes retained native client history through the same owner; `/codex-context`
-adds pressure/benefit diagnostics. Defaults remain unchanged. This working-tree feature
-is not a published tag or production deployment. Commands below are for the future tag only.
-See [usage, boundaries and regression evidence](docs/COMPACTION_BENEFIT.md).
+**0.4.1 candidate:** long-session native compact stability on the published `0.4.0` line
+(error/aborted history sanitization, ordered tool pairing, lab-route replay remap).
+Defaults and `/codex-native reader-text` from `0.4.0` are unchanged. See
+[LONG_SESSION_STABILITY.md](docs/LONG_SESSION_STABILITY.md). Commands below are for the future tag.
 
 **Historical `0.3.3`** repairs user/tool-image replay alongside native checkpoints and adds
 owner-bound reader-text summarization for mixed histories. It uses the published Pi
@@ -28,16 +27,16 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.0 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 --help
 ```
 
 - The installer requires the exact `dsh` CLI **`0.1.2-alpha.3` or `0.1.2-rc.1`** on PATH and delegates

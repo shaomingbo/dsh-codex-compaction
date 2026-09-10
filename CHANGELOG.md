@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.4.0 (unreleased candidate) — explicit reader-text and compaction benefit
+## 0.4.1 — long-session native compact stability
+
+- Compact-path sanitization keeps completed text and paired tools from error/aborted
+  assistant turns. Replay metadata is validated after the lab-route→native provider remap.
+  Interrupted call/result order is rejected; nested tool-result payload is not extra pairing.
+- Official Basic still owns shrink/pressure. Owner `estimateCheckpoint` remains
+  `JSON.stringify(items)/4` and is not a verified native occupancy oracle.
+
+## 0.4.0 — explicit reader-text and compaction benefit
 
 - Add restart-safe `/codex-native reader-text` on applicable standard routes. It uses
   one owner-bound stream with native replay and Basic's complete instruction, including

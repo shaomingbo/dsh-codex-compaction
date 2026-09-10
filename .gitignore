@@ -11,6 +11,8 @@ docs/*
 !docs/CODEX_RUNTIME_V1.md
 !docs/VALIDATION.md
 !docs/RECOVERY_FIX.md
+!docs/COMPACTION_BENEFIT.md
+!docs/LONG_SESSION_STABILITY.md
 
 # Local-only personal trial tooling (logs and progress are local evidence).
 scripts/prepare-native-trial.js

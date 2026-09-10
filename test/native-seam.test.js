@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local';
 import { Context, Service } from '@deepseek-ai/cordis';
 import Llm, { LlmAdapter, BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import Commands from '@deepseek-ai/dsh-commands';
@@ -335,6 +334,15 @@ for (const durable of [false, true]) for (const nested of [false, true]) {
       const f = await fixture(t, { runtimeOptions: { customModels: [ASTRA] } });
       let attachments, block = imageBlock, expectedData = imageData, expectedMediaType = 'image/png';
       if (durable) {
+        let LocalAttachmentStore;
+        try { ({ default: LocalAttachmentStore } = await import('@deepseek-ai/dsh-attachment-local')); }
+        catch (error) {
+          if (error?.code === 'ERR_MODULE_NOT_FOUND' && /Cannot find package '@deepseek-ai\/dsh-attachment-local' imported from/.test(error.message)) {
+            t.skip('declared @deepseek-ai/dsh-attachment-local is not resolvable from this installer layout');
+            return;
+          }
+          throw error;
+        }
         const home = await mkdtemp(join(tmpdir(), 'codex-image-store-'));
         t.after(() => rm(home, { recursive: true, force: true }));
         await f.ctx.plugin(LocalAttachmentStore, { dshHome: home });

@@ -1,7 +1,8 @@
 // Explicit paired-checkout suite. Run only via scripts/test-accounts.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, lstat } from 'node:fs/promises';
+import { readFile, lstat, mkdtemp, rm, writeFile, rename } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { zstdDecompressSync } from 'node:zlib';
@@ -113,6 +114,41 @@ test('real owner and B share one connection for three restored rounds with gener
   assert.equal(rejected.finish.kind, 'error');
   assert.match(rejected.finish.failure.code, /IDENTITY/);
   assert.equal(f.requests.length, before);
+});
+
+test('real owner compact accepts a generated lab-route message whose replay provider is openai-codex', async t => {
+  const f = await fixture(t);
+  const assembler = new BlockAssembler();
+  for await (const chunk of f.ctx.llm.stream({
+    provider: ROUTE, model: MODEL,
+    messages: [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Say continued.' }] })],
+    signal: f.signal,
+  })) assembler.push(chunk);
+  assert.equal(assembler.finish.kind, 'stop');
+  assert.ok(assembler.replayState, 'ordinary generation must persist a real replay envelope');
+  const generated = createAssistantMessage({
+    source: { provider: ROUTE, model: MODEL, replayState: assembler.replayState },
+    content: assembler.blocks(),
+  });
+  const turn = f.agent.session.seq;
+  f.agent.session.append('request/header', { header: { config: { provider: ROUTE, model: MODEL }, system: 'Preserve exact fixture constraints.' }, reason: 'initial' });
+  f.agent.session.append('turn/start', { turn });
+  f.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep BIZ-LAB-GENERATED.' }] }), { surfaceOp: 'append' });
+  f.agent.session.append('step/start', { turn, step: 0 });
+  f.agent.session.append('assistant/message', { turn, step: 0, message: generated }, { surfaceOp: 'append' });
+  f.agent.session.append('step/end', { turn, step: 0 });
+  f.agent.session.append('step/start', { turn, step: 1 });
+  f.agent.session.append('assistant/message', { turn, step: 1, message: createAssistantMessage({ source: { provider: ROUTE, model: MODEL }, content: [{ type: 'text', text: 'Historical lab fixture. '.repeat(4000) }] }) }, { surfaceOp: 'append' });
+  f.agent.session.append('step/end', { turn, step: 1 });
+  f.agent.session.append('step/start', { turn, step: 2 });
+  f.agent.session.append('assistant/message', { turn, step: 2, message: createAssistantMessage({ source: { provider: ROUTE, model: MODEL }, content: [{ type: 'text', text: 'Latest preserved tail.' }] }) }, { surfaceOp: 'append' });
+  f.agent.session.append('step/end', { turn, step: 2 });
+  f.agent.session.append('turn/end', { turn, reason: { kind: 'completed' } });
+  const before = f.requests.length;
+  const result = await f.ctx.commands.execute(f.agent, '/compact', [], f.signal);
+  assert.equal(result.result.kind, 'success', JSON.stringify(result));
+  assert.ok(f.requests.length > before);
+  assert.equal(f.requests.at(-1).body.input.at(-1)?.type, 'compaction_trigger');
 });
 
 test('real owner HTTP categories survive the registered bridge without error bodies or retry', async t => {
@@ -727,3 +763,602 @@ test('a real-schema-materialized Sol profile (input omitted) compacts natively e
 });
 
 registerRequestDeadlineTests(standardFixture);
+
+// ---- Long-session native stability (P0/P1) ----
+const replayState = (model, stopReason, blockTypes) => ({
+  response: { kind: 'pi-ai', version: 2, api: 'openai-codex-responses', provider: 'openai-codex', model, stopReason },
+  blocks: blockTypes.map(type => ({ type })),
+});
+const errorAssistant = (model, { text, tools = [], stopReason, replayVersion = 2 }) => {
+  const content = [
+    ...(text ? [{ type: 'text', text }] : []),
+    ...tools.map(tool => ({ type: 'tool-call', id: tool.id, name: tool.name ?? 'read_file', arguments: '{}' })),
+  ];
+  const state = replayState(model, stopReason, content.map(block => block.type === 'tool-call' ? 'tool-call' : 'text'));
+  state.response.version = replayVersion;
+  return createAssistantMessage({
+    source: { provider: 'openai-codex', model, replayState: state },
+    content,
+  });
+};
+const wireBlob = body => JSON.stringify(body.input);
+const assertNativeCompactWire = (body, { mustInclude = [], mustExclude = [] } = {}) => {
+  assert.equal(body.input.at(-1)?.type, 'compaction_trigger');
+  assert.equal(body.input.filter(item => item.type === 'compaction_trigger').length, 1);
+  const blob = wireBlob(body);
+  assert.equal(blob.includes('<compacted-summary>'), false);
+  assert.equal(blob.includes('</compacted-summary>'), false);
+  assert.equal(blob.includes('DSH_CODEX_OWNER_REPLAY_'), false);
+  const itemTexts = item => {
+    if (typeof item.content === 'string') return [item.content];
+    if (Array.isArray(item.content)) return item.content.map(part => part?.text).filter(text => typeof text === 'string');
+    return [];
+  };
+  assert.equal(body.input.some(item => itemTexts(item).some(text => text.startsWith('<dsh-codex-compaction'))), false, 'native envelope must not be sent as plaintext wire content');
+  assert.equal(body.input.some(item => item.role === 'user' && itemTexts(item).some(text => text.startsWith('You are now acting as a compaction engine for this AI coding assistant.') && !text.includes('BIZ-'))), false);
+  for (const token of mustInclude) assert.equal(blob.includes(token), true, 'expected business token missing from native wire');
+  for (const token of mustExclude) assert.equal(blob.includes(token), false, 'control or dropped token leaked onto native wire');
+};
+function appendTurn(session, model, { user, assistants, tools = [] }) {
+  const turn = session.seq;
+  if (!session.requestHeader()) {
+    session.append('request/header', { header: { config: { provider: 'openai-codex', model }, system: 'Preserve exact fixture constraints.' }, reason: 'initial' });
+  }
+  session.append('turn/start', { turn });
+  if (user) session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: user }] }), { surfaceOp: 'append' });
+  let step = 0;
+  for (const assistant of assistants) {
+    session.append('step/start', { turn, step });
+    session.append('assistant/message', { turn, step, message: assistant }, { surfaceOp: 'append' });
+    const calls = assistant.content.filter(block => block.type === 'tool-call');
+    for (const call of calls) {
+      session.append('tool/call', { turn, step, callId: call.id, name: call.name, arguments: call.arguments });
+      const result = tools.find(tool => tool.callId === call.id);
+      if (result) session.append('tool/result', { turn, step, message: createToolResultMessage(result) }, { surfaceOp: 'append' });
+    }
+    session.append('step/end', { turn, step });
+    step++;
+  }
+  session.append('turn/end', { turn, reason: { kind: 'completed' } });
+}
+
+test('P0-A abnormal history does not wrap the transcript or drop completed work', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  appendTurn(f.agent.session, ASTRA, {
+    user: 'Keep BIZ-USER-MARKERS, compaction_trigger, <dsh-codex-compaction-v1>, and You are now acting as a compaction engine in this real user text.',
+    assistants: [
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Historical standard fixture. '.repeat(4000) }] }),
+      errorAssistant(ASTRA, { text: 'Partial BIZ-CANCEL-TEXT before abort.', stopReason: 'aborted' }),
+      errorAssistant(ASTRA, { text: 'Completed BIZ-FAIL-TEXT after a tool.', tools: [{ id: 'call-complete' }], stopReason: 'error' }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Latest preserved tail BIZ-TAIL.' }] }),
+    ],
+    tools: [{ callId: 'call-complete', content: [{ type: 'text', text: 'BIZ-TOOL-RESULT' }], isError: false }],
+  });
+  appendTurn(f.agent.session, ASTRA, {
+    user: 'Later request.',
+    assistants: [
+      errorAssistant(ASTRA, { tools: [{ id: 'call-incomplete' }], stopReason: 'aborted' }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Keep the unfinished tool in the verbatim tail.' }] }),
+    ],
+  });
+  const before = f.agent.session.deriveMessages();
+  assert.equal(JSON.stringify(before).includes('call-incomplete'), true);
+  const result = await f.engine.compactNow(f.agent, f.signal);
+  assert.equal(typeof result.summarySeq, 'number');
+  assert.equal(f.hostCalls.length, 0);
+  assertNativeCompactWire(f.requests[0].body, {
+    mustInclude: ['BIZ-USER-MARKERS', 'BIZ-CANCEL-TEXT', 'BIZ-FAIL-TEXT', 'BIZ-TOOL-RESULT'],
+    mustExclude: ['call-incomplete'],
+  });
+  const blob = wireBlob(f.requests[0].body);
+  assert.equal(blob.includes('BIZ-USER-MARKERS') && blob.includes('BIZ-CANCEL-TEXT') && f.requests[0].body.input.filter(item => JSON.stringify(item).includes('BIZ-USER-MARKERS') && JSON.stringify(item).includes('BIZ-CANCEL-TEXT')).length === 0, true);
+  const after = f.agent.session.deriveMessages();
+  assert.equal(JSON.stringify(after).includes('call-incomplete'), true, 'unpaired cancelled tool stays in the host-retained tail');
+  assert.equal(JSON.stringify(after).includes('BIZ-TAIL') || JSON.stringify(after).includes('unfinished tool'), true);
+});
+
+test('P0-A nested tool-result content remains compactable on the real owner', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  appendTurn(f.agent.session, ASTRA, {
+    user: 'Investigate BIZ-NESTED-USER.',
+    assistants: [
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Historical nested fixture. '.repeat(4000) }] }),
+      errorAssistant(ASTRA, { text: 'Completed BIZ-NESTED-TEXT.', tools: [{ id: 'call-nested' }], stopReason: 'error' }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Tail.' }] }),
+    ],
+    tools: [{
+      callId: 'call-nested',
+      content: [
+        { type: 'text', text: 'BIZ-NESTED-OUTER' },
+        { type: 'tool-result', toolCallId: 'nested-inner', content: [{ type: 'text', text: 'BIZ-NESTED-INNER' }], isError: false },
+      ],
+      isError: false,
+    }],
+  });
+  const result = await f.engine.compactNow(f.agent, f.signal);
+  assert.equal(typeof result.summarySeq, 'number');
+  assert.equal(f.requests.length, 1);
+  const blob = wireBlob(f.requests[0].body);
+  assert.equal(blob.includes('BIZ-NESTED-OUTER') || blob.includes('BIZ-NESTED-INNER') || blob.includes('BIZ-NESTED-TEXT'), true);
+  assert.equal(f.requests[0].body.input.filter(item => item.type === 'function_call_output').length <= 1, true);
+});
+
+test('P0-A invalid replay stays fail-closed and does not send a compact request', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  appendTurn(f.agent.session, ASTRA, {
+    user: 'Keep BIZ-BAD-REPLAY-USER.',
+    assistants: [
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Historical standard fixture. '.repeat(4000) }] }),
+      errorAssistant(ASTRA, { text: 'Partial BIZ-BAD-REPLAY', stopReason: 'aborted', replayVersion: 999 }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Tail.' }] }),
+    ],
+  });
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => (error?.cause?.code ?? error?.code) === 'CODEX_NATIVE_REPLAY_INCOMPATIBLE');
+  assert.equal(f.requests.length, 0);
+  assert.equal(summariesOf(f.agent.session).length, 0);
+  assert.equal(f.hostCalls.length, 0);
+});
+
+test('P0-A interrupted tool pairing is rejected instead of duplicating results on the wire', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  const session = f.agent.session;
+  const turn = session.seq;
+  session.append('request/header', { header: { config: { provider: 'openai-codex', model: ASTRA }, system: 'Preserve exact fixture constraints.' }, reason: 'initial' });
+  session.append('turn/start', { turn });
+  session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Investigate BIZ-ORDER-USER.' }] }), { surfaceOp: 'append' });
+  session.append('step/start', { turn, step: 0 });
+  const failed = errorAssistant(ASTRA, { text: 'Completed BIZ-ORDER-TEXT.', tools: [{ id: 'call-order' }], stopReason: 'error' });
+  session.append('assistant/message', { turn, step: 0, message: failed }, { surfaceOp: 'append' });
+  session.append('tool/call', { turn, step: 0, callId: 'call-order', name: 'read_file', arguments: '{}' });
+  session.append('step/end', { turn, step: 0 });
+  session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Interrupting BIZ-ORDER-USER-2.' }] }), { surfaceOp: 'append' });
+  session.append('tool/result', { turn, step: 0, message: createToolResultMessage({ callId: 'call-order', content: [{ type: 'text', text: 'BIZ-ORDER-RESULT' }], isError: false }) }, { surfaceOp: 'append' });
+  session.append('step/start', { turn, step: 1 });
+  session.append('assistant/message', { turn, step: 1, message: createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Historical order fixture. '.repeat(4000) }] }) }, { surfaceOp: 'append' });
+  session.append('step/end', { turn, step: 1 });
+  session.append('turn/end', { turn, reason: { kind: 'completed' } });
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => (error?.cause?.code ?? error?.code) === 'CODEX_NATIVE_UNSAFE_HISTORY');
+  assert.equal(f.requests.length, 0);
+  assert.equal(summariesOf(f.agent.session).length, 0);
+});
+
+test('P0-A a later assistant tool call with unmatched prior calls is rejected with no wire request', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  const session = f.agent.session;
+  const turn = session.seq;
+  session.append('request/header', { header: { config: { provider: 'openai-codex', model: ASTRA }, system: 'Preserve exact fixture constraints.' }, reason: 'initial' });
+  session.append('turn/start', { turn });
+  session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Investigate BIZ-TWO-CALLS.' }] }), { surfaceOp: 'append' });
+  session.append('step/start', { turn, step: 0 });
+  session.append('assistant/message', { turn, step: 0, message: errorAssistant(ASTRA, { text: 'First call.', tools: [{ id: 'call-a' }], stopReason: 'error' }) }, { surfaceOp: 'append' });
+  session.append('tool/call', { turn, step: 0, callId: 'call-a', name: 'read_file', arguments: '{}' });
+  session.append('step/end', { turn, step: 0 });
+  session.append('step/start', { turn, step: 1 });
+  session.append('assistant/message', { turn, step: 1, message: errorAssistant(ASTRA, { text: 'Second call.', tools: [{ id: 'call-b' }], stopReason: 'error' }) }, { surfaceOp: 'append' });
+  session.append('tool/call', { turn, step: 1, callId: 'call-b', name: 'read_file', arguments: '{}' });
+  session.append('step/end', { turn, step: 1 });
+  session.append('tool/result', { turn, step: 0, message: createToolResultMessage({ callId: 'call-a', content: [{ type: 'text', text: 'A' }], isError: false }) }, { surfaceOp: 'append' });
+  session.append('tool/result', { turn, step: 1, message: createToolResultMessage({ callId: 'call-b', content: [{ type: 'text', text: 'B' }], isError: false }) }, { surfaceOp: 'append' });
+  session.append('step/start', { turn, step: 2 });
+  session.append('assistant/message', { turn, step: 2, message: createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Historical two-call fixture. '.repeat(4000) }] }) }, { surfaceOp: 'append' });
+  session.append('step/end', { turn, step: 2 });
+  session.append('turn/end', { turn, reason: { kind: 'completed' } });
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => (error?.cause?.code ?? error?.code) === 'CODEX_NATIVE_UNSAFE_HISTORY');
+  assert.equal(f.requests.length, 0);
+});
+
+test('P0-A non-string replay responseId fails closed with no compact request', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  const broken = errorAssistant(ASTRA, { text: 'Partial BIZ-BAD-ID', stopReason: 'aborted' });
+  const state = structuredClone(broken.source.replayState);
+  state.response.responseId = 123;
+  appendTurn(f.agent.session, ASTRA, {
+    user: 'Keep BIZ-BAD-ID-USER.',
+    assistants: [
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Historical standard fixture. '.repeat(4000) }] }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA, replayState: state }, content: broken.content }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Tail.' }] }),
+    ],
+  });
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => (error?.cause?.code ?? error?.code) === 'CODEX_NATIVE_REPLAY_INCOMPATIBLE');
+  assert.equal(f.requests.length, 0);
+});
+
+test('P0-B three official Basic rounds do not accumulate wrappers or replaced history', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  for (const round of [1, 2, 3]) {
+    appendTurn(f.agent.session, ASTRA, {
+      user: `Keep BIZ-R${round}-USER exactly once.`,
+      assistants: [
+        createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: `Historical BIZ-R${round}-HIST. `.repeat(4000) }] }),
+        createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: `Tail BIZ-R${round}-TAIL.` }] }),
+      ],
+    });
+    if (round === 2) {
+      appendTurn(f.agent.session, ASTRA, {
+        user: 'Recovered after a cancelled turn.',
+        assistants: [errorAssistant(ASTRA, { text: 'Partial BIZ-R2-CANCEL', stopReason: 'aborted' })],
+      });
+    }
+    const result = await f.engine.compactNow(f.agent, f.signal);
+    assert.equal(typeof result.summarySeq, 'number');
+    const body = f.requests.at(-1).body;
+    assertNativeCompactWire(body, { mustInclude: [`BIZ-R${round}-USER`] });
+    assert.equal(body.input.filter(item => JSON.stringify(item).includes(`BIZ-R${round}-USER`)).length, 1, 'real user text is not duplicated on the wire');
+    for (const prior of [1, 2, 3]) {
+      if (prior >= round) continue;
+      assert.equal(wireBlob(body).includes(`BIZ-R${prior}-HIST`), false, 'replaced historical assistant text must not reappear on a later wire');
+      assert.ok(body.input.filter(item => JSON.stringify(item).includes(`BIZ-R${prior}-USER`)).length <= 1);
+    }
+    const { record } = committedNativeReplacement(f.agent.session, f.ctx);
+    assert.equal(record.items.some(item => item.type === 'compaction_trigger'), false);
+    assert.equal(record.items.filter(item => item.type === 'compaction').length, 1);
+    const replacement = f.agent.session.deriveMessages().find(isNativeCarrier);
+    assert.equal((replacement.content ?? []).filter(block => block.type === 'text' && block.text.includes('<compacted-summary>')).length, 1);
+  }
+  assert.equal(f.requests.length, 3);
+  assert.equal(f.hostCalls.length, 0);
+  const beforeAgain = JSON.stringify(committedNativeReplacement(f.agent.session, f.ctx).record.items);
+  const beforeUsers = f.agent.session.deriveMessages().filter(message => message.source?.kind === 'user').length;
+  try {
+    const result = await f.engine.compactNow(f.agent, f.signal);
+    if (result) {
+      const next = committedNativeReplacement(f.agent.session, f.ctx).record;
+      assert.equal(JSON.stringify(next.items).includes('<compacted-summary>'), false);
+      assert.equal(JSON.stringify(next.items).includes('DSH_CODEX_OWNER_REPLAY_'), false);
+      assert.equal(JSON.stringify(next.items).includes('BIZ-R1-HIST'), false);
+      assert.ok(JSON.stringify(next.items).length < beforeAgain.length * 3, 'no-new-content compact must not grow from wrapping');
+    }
+  } catch (error) {
+    assert.equal(error.code, 'summary');
+    assert.match(String(error.cause?.message ?? ''), /summary is not smaller than the shadowed content/);
+    assert.equal(JSON.stringify(committedNativeReplacement(f.agent.session, f.ctx).record.items), beforeAgain);
+  }
+  assert.equal(f.agent.session.deriveMessages().filter(message => message.source?.kind === 'user').length >= beforeUsers, true);
+});
+
+test('P0-C standard-path metering distinguishes host estimate, native replay estimate, bytes and usage', async t => {
+  const f = await standardFixture(t, {
+    nativeReply: ({ events }) => sse([
+      { type: 'response.output_item.done', item: { type: 'compaction', encrypted_content: 'opaque-meter-fixture'.repeat(800) } },
+      { type: 'response.completed', response: { status: 'completed' } },
+    ]),
+  });
+  f.enable();
+  f.addStandardHistory();
+  const shadowed = f.ctx.tokenMeter.measure(f.agent.session);
+  const result = await f.engine.compactNow(f.agent, f.signal);
+  assert.equal(typeof result.summarySeq, 'number');
+  const replacement = f.agent.session.deriveMessages().find(message => message.source.kind === 'plugin' && message.source.plugin === 'compact');
+  const envelope = replacement.content.find(block => block.type === 'text' && block.text.startsWith('<dsh-codex-compaction-v1>')).text;
+  const record = f.ctx.codexBridge.readCheckpoint(replacement);
+  const hostEstimate = f.ctx.tokenMeter.estimateMessage(replacement);
+  const nativeEstimate = f.ctx.codexBridge.estimateCheckpoint(record);
+  const bytes = Buffer.byteLength(envelope, 'utf8');
+  assert.equal(nativeEstimate.exact, false);
+  assert.equal(nativeEstimate.basis, 'native-replay-json-utf16/4');
+  assert.equal(Number.isFinite(nativeEstimate.tokens) && nativeEstimate.tokens >= 0, true);
+  assert.equal(hostEstimate < shadowed.totalTokens, true, 'Basic shrink used the host meter on the framed envelope');
+  assert.equal(bytes > nativeEstimate.tokens, true, 'serialization bytes are not the native replay token estimate');
+  const summary = summariesOf(f.agent.session).at(-1);
+  assert.equal(summary.data.usage, undefined, 'unobserved provider usage stays unavailable, not a fabricated zero');
+  const after = f.ctx.tokenMeter.measure(f.agent.session);
+  const comparison = {
+    hostFramedEstimate: hostEstimate,
+    nativeReplayEstimate: nativeEstimate.tokens,
+    nativeBasis: nativeEstimate.basis,
+    envelopeBytes: bytes,
+    shadowedHostTokens: result.shadowedTokenCount,
+    postReplaceHostTokens: after.totalTokens,
+  };
+  assert.equal(comparison.nativeReplayEstimate === comparison.hostFramedEstimate, false,
+    'standard Basic shrink/pressure still prices the framed envelope, not the owner replay estimate');
+  assert.equal(nativeEstimate.tokens, Math.ceil(JSON.stringify(record.items).length / 4),
+    'owner estimate is JSON.stringify(items)/4, including opaque ciphertext, not a verified native context occupancy');
+  const mid = nativeEstimate.tokens + Math.floor((after.totalTokens - nativeEstimate.tokens) / 2);
+  assert.equal(after.totalTokens > nativeEstimate.tokens, true);
+  assert.equal(after.totalTokens >= mid, true, 'host post-replace pressure would use framed occupancy');
+  assert.equal(nativeEstimate.tokens >= mid, false, 'the same threshold would not fire if priced by the owner JSON estimate');
+  const auto = await standardFixture(t, {
+    deferEngine: true,
+    nativeReply: ({ events }) => sse([
+      { type: 'response.output_item.done', item: { type: 'compaction', encrypted_content: 'opaque-meter-fixture'.repeat(800) } },
+      { type: 'response.completed', response: { status: 'completed' } },
+    ]),
+  });
+  auto.enable();
+  auto.addStandardHistory();
+  const engine = auto.makeEngine({
+    auto: true,
+    compactionRetries: 0,
+    modelPolicies: [{ provider: 'openai-codex', model: ASTRA, thresholdRatio: mid / 872000, retainTokens: 0 }],
+  });
+  await engine.compactNow(auto.agent, auto.signal);
+  const post = auto.ctx.tokenMeter.measure(auto.agent.session);
+  const beforeAuto = auto.requests.length;
+  openTurn(auto.agent.session, 2);
+  await auto.ctx.waterfall('agent/pre-step', { agent: auto.agent, signal: auto.signal }, () => 'pre-step-final');
+  closeTurn(auto.agent.session, 2);
+  assert.equal(auto.requests.length > beforeAuto, post.totalTokens >= mid,
+    'post-replace automatic pressure follows the host meter, not the owner JSON estimate');
+});
+
+test('P1-A cancel before replace leaves history unchanged; cancel after commit is not a rollback', async t => {
+  const abortDuring = new AbortController();
+  const f = await standardFixture(t, {
+    nativeReply: ({ events }) => {
+      abortDuring.abort();
+      return sse(events);
+    },
+  });
+  f.enable();
+  f.addStandardHistory();
+  const before = JSON.stringify(f.agent.session.deriveMessages());
+  await assert.rejects(f.engine.compactNow(f.agent, abortDuring.signal));
+  assert.equal(JSON.stringify(f.agent.session.deriveMessages()), before);
+  assert.equal(summariesOf(f.agent.session).length, 0);
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).recovery.every(entry => !entry.inFlight), true);
+
+  let released;
+  const mutate = await standardFixture(t, {
+    nativeReply: ({ events }) => {
+      mutate.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'BIZ-NEW-AFTER-SELECT' }] }), { surfaceOp: 'append' });
+      return sse(events);
+    },
+  });
+  mutate.enable();
+  mutate.addStandardHistory();
+  const mutated = await mutate.engine.compactNow(mutate.agent, mutate.signal);
+  assert.equal(typeof mutated.summarySeq, 'number');
+  const messages = mutate.agent.session.deriveMessages();
+  assert.equal(JSON.stringify(messages).includes('BIZ-NEW-AFTER-SELECT'), true, 'selected-span commit keeps messages appended outside the span');
+  assert.equal(messages.some(isNativeCarrier), true);
+  released = mutate.ctx.codexBridge.nativePreferenceStatus(mutate.agent.session.id);
+  assert.equal(released.recovery.every(entry => !entry.inFlight), true);
+
+  const afterCommit = new AbortController();
+  const committed = await standardFixture(t);
+  committed.enable();
+  committed.addStandardHistory();
+  const originalFlush = committed.ctx.sessions.flush.bind(committed.ctx.sessions);
+  committed.ctx.sessions.flush = async session => {
+    afterCommit.abort();
+    return originalFlush(session);
+  };
+  await assert.rejects(committed.engine.compactNow(committed.agent, afterCommit.signal));
+  assert.equal(committed.agent.session.deriveMessages().some(isNativeCarrier), true, 'post-replace cancel is not a rollback');
+
+  const beforeCommit = new AbortController();
+  const remoteDone = await standardFixture(t);
+  remoteDone.enable();
+  remoteDone.addStandardHistory();
+  const beforeRemote = JSON.stringify(remoteDone.agent.session.deriveMessages());
+  const summarize = remoteDone.engine.summarize.bind(remoteDone.engine);
+  remoteDone.engine.summarize = async (...args) => {
+    const result = await summarize(...args);
+    beforeCommit.abort();
+    return result;
+  };
+  await assert.rejects(remoteDone.engine.compactNow(remoteDone.agent, beforeCommit.signal));
+  assert.equal(JSON.stringify(remoteDone.agent.session.deriveMessages()), beforeRemote);
+  assert.equal(summariesOf(remoteDone.agent.session).length, 0);
+  assert.ok(remoteDone.requests.length >= 1, 'remote compact finished before the pre-commit cancel');
+
+  const inSpan = await standardFixture(t, {
+    nativeReply: ({ events }) => {
+      const span = inSpan.agent.session.surface.nodes;
+      inSpan.agent.session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'BIZ-INSPAN-REWRITE' }] }), {
+        surfaceOp: { op: 'replace', start: span[0], end: span[span.length - 1] },
+      });
+      return sse(events);
+    },
+  });
+  inSpan.enable();
+  inSpan.addStandardHistory();
+  const beforeSpan = JSON.stringify(inSpan.agent.session.deriveMessages());
+  try {
+    await inSpan.engine.compactNow(inSpan.agent, inSpan.signal);
+    assert.equal(JSON.stringify(inSpan.agent.session.deriveMessages()).includes('BIZ-INSPAN-REWRITE'), true,
+      'if in-span replace was allowed, a successful compact must not drop the rewritten history');
+  } catch {
+    const afterSpan = JSON.stringify(inSpan.agent.session.deriveMessages());
+    assert.equal(afterSpan.includes('<dsh-codex-compaction-v1>'), false, 'a rejected in-span rewrite must not commit a stale checkpoint');
+    assert.ok(afterSpan === beforeSpan || afterSpan.includes('BIZ-INSPAN-REWRITE'));
+  }
+});
+
+test('P1-B persistence failure after commit is not retried as a native network error', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  f.addStandardHistory();
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-codex-journal-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  let failFlush = false;
+  let failAfterSave = false;
+  f.ctx.on('session/flush', async session => {
+    const events = session.snapshotEvents();
+    const path = join(dir, `${session.id}.jsonl`);
+    if (failFlush) throw Object.assign(new Error('injected journal flush failure'), { code: 'CODEX_TEST_FLUSH' });
+    const tmp = `${path}.tmp`;
+    await writeFile(tmp, events.map(event => JSON.stringify(event)).join('\n'));
+    await rename(tmp, path);
+    if (failAfterSave) throw Object.assign(new Error('injected post-save notify failure'), { code: 'CODEX_TEST_NOTIFY' });
+  });
+  await f.engine.compactNow(f.agent, f.signal);
+  const restored = f.ctx.sessions.create(undefined, {
+    seed: (await readFile(join(dir, `${f.agent.session.id}.jsonl`), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line)),
+  });
+  assert.equal(restored.deriveMessages().some(isNativeCarrier), true);
+
+  failFlush = true;
+  appendTurn(f.agent.session, ASTRA, {
+    user: 'BIZ-AFTER-FLUSH',
+    assistants: [
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'More historical fixture. '.repeat(4000) }] }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'New tail.' }] }),
+    ],
+  });
+  const requests = f.requests.length;
+  const firstIdentity = f.ctx.codexBridge.readCheckpoint(f.agent.session.deriveMessages().find(isNativeCarrier)).identity;
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => error.code === 'persistence' || error.cause?.code === 'CODEX_TEST_FLUSH' || /durability|persistence/i.test(String(error)));
+  assert.equal(f.requests.length, requests + 1, 'flush failure must not open another native compact');
+  assert.equal(f.agent.session.deriveMessages().some(isNativeCarrier), true);
+  assert.equal(f.hostCalls.length, 0);
+  const disk = (await readFile(join(dir, `${f.agent.session.id}.jsonl`), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  assert.ok(disk.length < f.agent.session.snapshotEvents().length, 'failed flush must not rewrite the journal');
+  const fromDisk = f.ctx.sessions.create(undefined, { seed: disk });
+  assert.equal(fromDisk.deriveMessages().some(isNativeCarrier), true);
+  assert.equal(f.ctx.codexBridge.readCheckpoint(fromDisk.deriveMessages().find(isNativeCarrier)).identity, firstIdentity);
+  assert.equal(JSON.stringify(fromDisk.deriveMessages()).includes('BIZ-AFTER-FLUSH'), false);
+  const recovery = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).recovery;
+  assert.equal(recovery.every(entry => !entry.inFlight), true);
+  assert.equal(recovery.every(entry => !entry.coolingDown), true, 'a local persistence failure must not start native-network cooldown');
+
+  failFlush = false;
+  failAfterSave = true;
+  appendTurn(f.agent.session, ASTRA, {
+    user: 'BIZ-AFTER-SAVE',
+    assistants: [
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Post-save historical fixture. '.repeat(4000) }] }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Post-save tail.' }] }),
+    ],
+  });
+  const afterSaveRequests = f.requests.length;
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => error.code === 'persistence' || error.cause?.code === 'CODEX_TEST_NOTIFY' || /durability|persistence/i.test(String(error)));
+  assert.equal(f.requests.length, afterSaveRequests + 1);
+  const diskAfterSave = (await readFile(join(dir, `${f.agent.session.id}.jsonl`), 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  assert.ok(diskAfterSave.length >= disk.length, 'rename already succeeded before the notify failure');
+  const fromDiskAfterSave = f.ctx.sessions.create(undefined, { seed: diskAfterSave });
+  assert.equal(JSON.stringify(fromDiskAfterSave.deriveMessages()).includes('BIZ-AFTER-SAVE') || fromDiskAfterSave.deriveMessages().some(isNativeCarrier), true);
+  const afterNotify = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).recovery;
+  assert.equal(afterNotify.every(entry => !entry.inFlight), true);
+  assert.equal(afterNotify.every(entry => !entry.coolingDown), true);
+});
+
+test('P1-C public fork before and after a checkpoint keeps history boundaries', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  f.addStandardHistory();
+  const beforeSeq = f.agent.session.snapshotEvents().at(-1).seq;
+  const pre = f.ctx.sessions.fork(f.agent.session, beforeSeq);
+  await f.engine.compactNow(f.agent, f.signal);
+  const afterSeq = f.agent.session.snapshotEvents().at(-1).seq;
+  const post = f.ctx.sessions.fork(f.agent.session, afterSeq);
+  assert.equal(pre.deriveMessages().some(isNativeCarrier), false);
+  assert.equal(JSON.stringify(pre.deriveMessages()).includes('Keep /fixture/standard.ts'), true);
+  assert.equal(post.deriveMessages().some(isNativeCarrier), true);
+  f.ctx.codexBridge.setNativePreference(post.id, 'on');
+  const postAgent = { ...f.agent, session: post, options: { provider: 'openai-codex', model: ASTRA }, runMaintenance: async action => action(f.signal) };
+  appendTurn(post, ASTRA, {
+    user: 'BIZ-FORK-CONTINUE',
+    assistants: [
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Fork continuation history. '.repeat(4000) }] }),
+      createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Fork tail.' }] }),
+    ],
+  });
+  await f.engine.compactNow(postAgent, f.signal);
+  assert.equal(JSON.stringify(post.deriveMessages()).includes('BIZ-FORK-CONTINUE') || f.requests.at(-1).body.input.some(item => JSON.stringify(item).includes('BIZ-FORK-CONTINUE')), true);
+  assert.equal(pre.deriveMessages().some(isNativeCarrier), false);
+  const replay = async (session, expectCompaction) => {
+    const before = f.requests.length;
+    const assembler = new BlockAssembler();
+    for await (const chunk of f.ctx.llm.stream({ provider: 'openai-codex', model: ASTRA, sessionId: session.id, messages: session.deriveMessages(), signal: f.signal })) assembler.push(chunk);
+    assert.equal(assembler.finish.kind, 'stop');
+    if (expectCompaction) {
+      assert.ok(f.requests.length > before);
+      assert.equal(f.requests.at(-1).body.input.some(item => item.type === 'compaction'), true);
+    } else {
+      assert.equal(f.requests.length, before, 'a pre-checkpoint fork must not replay opaque native state');
+    }
+  };
+  f.ctx.codexBridge.setNativePreference(pre.id, 'on');
+  await replay(pre, false);
+  await replay(post, true);
+  const rebuilt = f.ctx.sessions.create(undefined, { seed: JSON.parse(JSON.stringify(post.snapshotEvents())) });
+  f.ctx.codexBridge.setNativePreference(rebuilt.id, 'on');
+  await replay(rebuilt, true);
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).recovery.every(entry => !entry.inFlight), true);
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(post.id).recovery.every(entry => !entry.inFlight), true);
+  assert.equal(f.ctx.codexBridge.nativePreferenceStatus(pre.id).recovery.every(entry => !entry.inFlight), true);
+});
+
+test('P1-D oversized converted compact input fails closed without treating HTTP 400 as overflow', async t => {
+  const f = await standardFixture(t);
+  f.enable();
+  f.addStandardHistory();
+  await f.engine.compactNow(f.agent, f.signal);
+  const session = f.agent.session;
+  const turn = session.seq;
+  session.append('request/header', {
+    header: {
+      config: { provider: 'openai-codex', model: ASTRA },
+      system: `${'SYSTEM-OVERFLOW '.repeat(2000)}\nPreserve exact fixture constraints.`,
+      tools: [{ name: 'read_file', description: 'Read a file. '.repeat(400), parameters: { type: 'object', properties: { path: { type: 'string' } } } }],
+    },
+    reason: 'series',
+  });
+  session.append('turn/start', { turn });
+  session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'BIZ-OVERFLOW-USER' }] }), { surfaceOp: 'append' });
+  session.append('step/start', { turn, step: 0 });
+  session.append('assistant/message', { turn, step: 0, message: createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [
+    { type: 'tool-call', id: 'call-huge', name: 'read_file', arguments: '{}' },
+  ] }) }, { surfaceOp: 'append' });
+  session.append('tool/call', { turn, step: 0, callId: 'call-huge', name: 'read_file', arguments: '{}' });
+  session.append('tool/result', { turn, step: 0, message: createToolResultMessage({ callId: 'call-huge', content: [{ type: 'text', text: 'HUGE-TOOL-OUTPUT '.repeat(80_000) }], isError: false }) }, { surfaceOp: 'append' });
+  session.append('step/end', { turn, step: 0 });
+  session.append('step/start', { turn, step: 1 });
+  session.append('assistant/message', { turn, step: 1, message: createAssistantMessage({ source: { provider: 'openai-codex', model: ASTRA }, content: [{ type: 'text', text: 'Tail after huge tool.' }] }) }, { surfaceOp: 'append' });
+  session.append('step/end', { turn, step: 1 });
+  session.append('turn/end', { turn, reason: { kind: 'completed' } });
+  const before = f.requests.length;
+  try {
+    const result = await f.engine.compactNow(f.agent, f.signal);
+    assert.equal(typeof result.summarySeq, 'number');
+    assert.ok(f.requests.length > before, 'the converted compact request must actually be sent');
+    const body = f.requests.at(-1).body;
+    assert.equal(body.input.at(-1)?.type, 'compaction_trigger');
+    assert.ok(body.input.some(item => item.type === 'compaction'), 'prior checkpoint must be on the converted wire');
+    assert.match(JSON.stringify(body), /HUGE-TOOL-OUTPUT/);
+    assert.ok(JSON.stringify(body.instructions ?? body).includes('SYSTEM-OVERFLOW') || JSON.stringify(body).includes('SYSTEM-OVERFLOW'));
+    assert.ok((body.tools?.length ?? 0) >= 1 || JSON.stringify(body).includes('read_file'));
+    assert.ok(Buffer.byteLength(JSON.stringify(body), 'utf8') > 100_000, 'converted request size is inspected, not just source message size');
+  } catch (error) {
+    const code = error?.cause?.code ?? error?.code ?? '';
+    assert.ok(/BODY_SIZE|RETENTION_SIZE|JSON_LIMIT|CHECKPOINT_SIZE|SSE_SIZE/.test(String(code)), `oversized converted input must fail as owner governance, not summary/replay (${code})`);
+    assert.equal(summariesOf(f.agent.session).length, 1);
+  }
+  assert.equal(f.hostCalls.length, 0);
+
+  const classified = await standardFixture(t, { deferEngine: true });
+  classified.enable();
+  classified.addStandardHistory();
+  classified.makeEngine({ auto: true, maxOverflowRetries: 1 });
+  openTurn(classified.agent.session, 1);
+  const http400 = await classified.ctx.waterfall('agent/request-error', { agent: classified.agent, failure: { code: 'HTTP_400' }, signal: classified.signal }, () => 'original-error');
+  assert.equal(http400, 'original-error', 'plain HTTP 400 is not a context-overflow recovery entry');
+  assert.equal(classified.requests.length, 0);
+  const overflow = await classified.ctx.waterfall('agent/request-error', { agent: classified.agent, failure: { code: 'CONTEXT_WINDOW_EXCEEDED' }, signal: classified.signal }, () => 'original-error');
+  assert.deepEqual(overflow, { kind: 'retry' }, 'a real overflow still enters native recovery on the same auto engine');
+  assert.equal(classified.requests.length, 1);
+  closeTurn(classified.agent.session, 1);
+});
+
+test('P1-E HTTP 429 is not a text-fallback entry and does not add attempts', async t => {
+  const f = await standardFixture(t, { failFirstStatus: 429 });
+  f.enable();
+  f.addStandardHistory();
+  await assert.rejects(f.engine.compactNow(f.agent, f.signal), error => (error?.cause?.code ?? error?.code) === 'CODEX_RUNTIME_HTTP_429');
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.hostCalls.length, 0);
+  assert.equal(summariesOf(f.agent.session).length, 0);
+  const attempt = f.ctx.codexBridge.nativePreferenceStatus(f.agent.session.id).lastAttempt;
+  assert.equal(attempt.kind, 'native');
+  assert.equal(attempt.outcome, 'failed');
+});

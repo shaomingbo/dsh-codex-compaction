@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { LlmAdapter, LlmError, PiAiAdapter, PiAiConfig, BlockAssembler, resolveRetryPolicy, isCompactCheckpointSource } from './compatibility.js';
 import { ROUTE, STANDARD_ROUTE, NATIVE_PROVIDER, DISPLAY_NAME, failure } from './constants.js';
+import { remapLegacyCompactMessage, sanitizeCompactHistory } from './compact-history.js';
 
 const PREFIX = '<dsh-codex-compaction';
 export const CODEC_PREFIX = PREFIX;
@@ -94,9 +95,7 @@ function prepareHistory(runtime, messages, binding) {
       replay.push({ placeholder, checkpoint });
       return { ...message, content: [{ type: 'text', text: placeholder }] };
     }
-    return message.source?.kind === 'model' && message.source.provider === ROUTE
-      ? { ...message, source: { ...message.source, provider: NATIVE_PROVIDER } }
-      : message;
+    return remapLegacyCompactMessage(message);
   });
   return { messages: prepared, replay };
 }
@@ -179,7 +178,7 @@ async function* streamOnLease(adapter, lease, options) {
 async function compactOnLease(adapter, lease, { model, messages, system, tools, signal }) {
   assertTextHistory(messages); signal?.throwIfAborted();
   const runtime = adapter.runtime();
-  const history = prepareHistory(runtime, messages, lease.binding);
+  const history = prepareHistory(runtime, sanitizeCompactHistory(messages), lease.binding);
   const provider = lease.operation.provider({ mode: 'compact', replay: history.replay });
   const assembler = new BlockAssembler();
   const request = { provider: NATIVE_PROVIDER, model, messages: history.messages,

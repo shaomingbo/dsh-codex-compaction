@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
+import { BlockAssembler, createUserMessage, createAssistantMessage } from '@deepseek-ai/dsh-llm';
 import { compactCheckpointSource } from '@deepseek-ai/dsh-compaction';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import { OwnerBoundCodexAdapter, isNativeCarrier } from '../src/runtime-adapter.js';
-import { ROUTE } from '../src/constants.js';
+import { NATIVE_PROVIDER, ROUTE } from '../src/constants.js';
 import { fakeRuntime } from './helpers/fake-runtime.js';
 const model = 'gpt-5.4';
 const user = text => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] });
@@ -24,6 +24,42 @@ test('generic adapter delegates native compaction without owning credentials or 
   assert.equal(f.calls[0].options.apiKey, undefined);
   assert.equal(f.opened, 1);
   assert.equal(f.closed, 1);
+});
+
+test('legacy lab-generated replay remaps before compact instead of failing closed', async () => {
+  const f = fakeRuntime();
+  const adapter = new OwnerBoundCodexAdapter(() => f.runtime);
+  const generated = createAssistantMessage({
+    source: {
+      provider: ROUTE, model,
+      replayState: {
+        response: { kind: 'pi-ai', version: 2, api: 'openai-codex-responses', provider: NATIVE_PROVIDER, model, stopReason: 'stop' },
+        blocks: [{ type: 'text' }],
+      },
+    },
+    content: [{ type: 'text', text: 'Generated BIZ-LAB-REPLAY from the native lab route.' }],
+  });
+  const result = await adapter.compact(input([user('Continue the saved lab turn.'), generated]));
+  assert.equal(result.checkpoint.identity, 'fixture-owner-connection');
+  assert.equal(f.calls.length, 1);
+  assert.match(piText(f.calls[0].context.messages.at(-1)), /BIZ-LAB-REPLAY/);
+});
+
+test('non-string replay responseId fails closed with no compact request', async () => {
+  const f = fakeRuntime();
+  const adapter = new OwnerBoundCodexAdapter(() => f.runtime);
+  const broken = createAssistantMessage({
+    source: {
+      provider: ROUTE, model,
+      replayState: {
+        response: { kind: 'pi-ai', version: 2, api: 'openai-codex-responses', provider: NATIVE_PROVIDER, model, stopReason: 'aborted', responseId: 123 },
+        blocks: [{ type: 'text' }],
+      },
+    },
+    content: [{ type: 'text', text: 'Partial output.' }],
+  });
+  await assert.rejects(adapter.compact(input([user('retry'), broken])), error => error.code === 'CODEX_NATIVE_REPLAY_INCOMPATIBLE');
+  assert.equal(f.calls.length, 0);
 });
 
 for (const purpose of ['stream', 'compaction']) {
