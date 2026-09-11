@@ -2,10 +2,8 @@
 
 [中文](README.zh.md)
 
-**0.4.1 candidate:** long-session native compact stability on the published `0.4.0` line
-(error/aborted history sanitization, ordered tool pairing, lab-route replay remap).
-Defaults and `/codex-native reader-text` from `0.4.0` are unchanged. See
-[LONG_SESSION_STABILITY.md](docs/LONG_SESSION_STABILITY.md). Commands below are for the future tag.
+**0.4.2:** Session V3 current-surface system prompt for structured compaction, plus the
+`0.4.1` long-session native compact stability line. Does not claim `0.1.5-*`.
 
 **Historical `0.3.3`** repairs user/tool-image replay alongside native checkpoints and adds
 owner-bound reader-text summarization for mixed histories. It uses the published Pi
@@ -27,19 +25,19 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 --help
 ```
 
-- The installer requires the exact `dsh` CLI **`0.1.2-alpha.3` or `0.1.2-rc.1`** on PATH and delegates
+- The installer requires the exact `dsh` CLI **`0.1.2-alpha.3`, `0.1.2-rc.1`, or `0.1.5-rc.1`** on PATH and delegates
   every mutation to the public `dsh plugin` CLI with `--ignore-scripts` (pnpm 11 remove
   uses `--config.ignore-scripts=true`, not its unsupported shorthand). It verifies
   manifest postconditions and reports failures honestly; rc.1 does not promise rollback.

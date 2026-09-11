@@ -6,6 +6,7 @@ import {
   toolPairingBalancedBefore, toolPairingBalancedAfter,
   createUserMessage, errorChain, Session,
 } from './engine-host.js';
+import { compactionSystemPrompt, replaceSurfaceOp } from './compatibility.js';
 
 const summary = () => [{ type: 'text', text: 'Codex structured checkpoint (context size is estimated).' }];
 const manualError = (code, cause) => new ManualCompactionError(code, `structured Codex compaction: ${code}`, { cause });
@@ -190,7 +191,8 @@ async function transact(engine, start, end, agent, signal, manual, sourceCommand
     const hostSelected = before.hostMeasurement.nodes.slice(selected.first, selected.last + 1);
     const messages = selected.seqs.map(seq => session.deriveEventMessage(session.eventAt(seq))).filter(message => message !== null);
     const header = session.requestHeader();
-    const input = { messages, ...(header?.system === undefined ? {} : { system: header.system }), ...(header?.tools === undefined ? {} : { tools: header.tools }) };
+    const system = compactionSystemPrompt(session, messages);
+    const input = { messages, ...(system === undefined ? {} : { system }), ...(header?.tools === undefined ? {} : { tools: header.tools }) };
     const native = await engine.compact(input, agent, signal);
     signal?.throwIfAborted();
     const record = engine.validateCheckpoint(native?.checkpoint);
@@ -221,7 +223,7 @@ async function transact(engine, start, end, agent, signal, manual, sourceCommand
       ...(native.usage === undefined ? {} : { usage: native.usage }),
     };
     const summarized = session.append('compaction/summary', data);
-    session.append('user/message', message, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: [opened.seq, summarized.seq, ...selected.seqs] });
+    session.append('user/message', message, { surfaceOp: replaceSurfaceOp(start, end), sourceEventSeqs: [opened.seq, summarized.seq, ...selected.seqs] });
     closing = true;
     const ended = session.append('compaction/end', lifecycle);
     closed = true;

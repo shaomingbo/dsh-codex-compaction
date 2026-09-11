@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2 — Session V3 current-surface system prompt
+
+- Structured compaction reads the current model-visible system prompt from
+  `session.surface.nodes` + `eventAt`, so A→B→A normalization that clears only
+  the tail still keeps head A. Empty later nodes stay dormant; a fully empty
+  surface is "no prompt".
+- Verified against published DSH `0.1.5-rc.1` Session plus `0.1.2-rc.1` host
+  installer matrix. Does not claim `0.1.5-*`.
+
 ## 0.4.1 — long-session native compact stability
 
 - Compact-path sanitization keeps completed text and paired tools from error/aborted

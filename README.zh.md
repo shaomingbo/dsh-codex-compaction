@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-**0.4.1 候选：**在已发布 `0.4.0` 上补长期会话原生压缩稳定性（异常历史消毒、工具配对顺序、lab 路由 replay 映射）。默认与 `0.4.0` 的 `/codex-native reader-text` 不变。详见 [LONG_SESSION_STABILITY.md](docs/LONG_SESSION_STABILITY.md)。下方命令仅在未来 tag 发布后使用。
+**0.4.2：**结构化压缩按 Session V3 当前 surface 读取系统提示；保留 `0.4.1` 长期会话原生压缩稳定性。不承诺 `0.1.5-*`。
 
 **历史版本 `0.3.3`** 修复原生检查点与用户/工具图片的混合回放，并支持同一 owner 下的混合历史
 reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值，补充真实附件服务回归。
@@ -20,19 +20,19 @@ reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值
 ## 安装（tag 存在后）
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2
 ```
 
 无参数等同 `install`；默认 profile 为 `web`。其他命令：
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.1 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 --help
 ```
 
-- 安装器要求 PATH 上存在精确版本 `dsh` CLI **`0.1.2-alpha.3` 或 `0.1.2-rc.1`**，所有变更都委托给公开
+- 安装器要求 PATH 上存在精确版本 `dsh` CLI **`0.1.2-alpha.3`、`0.1.2-rc.1` 或 `0.1.5-rc.1`**，所有变更都委托给公开
   `dsh plugin` CLI 并带 `--ignore-scripts`（pnpm 11 的 remove 用 `--config.ignore-scripts=true`，
   不用其不支持的简写）。安装器核验 manifest 后置条件并如实报告失败；rc.1 不承诺回滚。
   只探测顶层 launcher help：plugin help 会初始化 profile。
