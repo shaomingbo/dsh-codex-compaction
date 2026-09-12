@@ -29,7 +29,7 @@ function assertVersions() {
 }
 export function replaceSurfaceOp(start, end) {
   const host = resolvedHostVersion();
-  return host === '0.1.5-rc.1' ? { op: 'replace', startSeq: start, endSeq: end } : { op: 'replace', start, end };
+  return host === '0.1.5-rc.1' || host === '0.1.5-rc.2' ? { op: 'replace', startSeq: start, endSeq: end } : { op: 'replace', start, end };
 }
 function systemMessageText(message) {
   if (typeof message?.content === 'string' && message.content.length > 0) return message.content;

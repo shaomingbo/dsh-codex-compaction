@@ -20,19 +20,19 @@ reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值
 ## 安装（tag 存在后）
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3
 ```
 
 无参数等同 `install`；默认 profile 为 `web`。其他命令：
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 --help
 ```
 
-- 安装器要求 PATH 上存在精确版本 `dsh` CLI **`0.1.2-alpha.3`、`0.1.2-rc.1` 或 `0.1.5-rc.1`**，所有变更都委托给公开
+- 安装器要求 PATH 上存在精确版本 `dsh` CLI **`0.1.2-alpha.3`、`0.1.2-rc.1`、`0.1.5-rc.1` 或 `0.1.5-rc.2`**，所有变更都委托给公开
   `dsh plugin` CLI 并带 `--ignore-scripts`（pnpm 11 的 remove 用 `--config.ignore-scripts=true`，
   不用其不支持的简写）。安装器核验 manifest 后置条件并如实报告失败；rc.1 不承诺回滚。
   只探测顶层 launcher help：plugin help 会初始化 profile。

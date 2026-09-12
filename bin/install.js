@@ -39,7 +39,7 @@ No command means install. Default profile: web.
   -h, --help    Show help without requiring dsh or accessing a profile
 
 Requires dsh ${SUPPORTED_DSH_VERSIONS.join(' or ')} (exact) on PATH and pnpm.
-Host packages must be a homogeneous 0.1.2-rc.1 or 0.1.5-rc.1 set; the CLI version does not identify a running GUI.
+Host packages must be a homogeneous 0.1.2-rc.1, 0.1.5-rc.1, or 0.1.5-rc.2 set; the CLI version does not identify a running GUI.
 Check dsh --version.
 All dependency operations pass --ignore-scripts. No direct manifest writes or fallback.
 The fixed release tag is a candidate; its publication is not assumed.

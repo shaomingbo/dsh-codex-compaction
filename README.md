@@ -25,19 +25,19 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.2 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 --help
 ```
 
-- The installer requires the exact `dsh` CLI **`0.1.2-alpha.3`, `0.1.2-rc.1`, or `0.1.5-rc.1`** on PATH and delegates
+- The installer requires the exact `dsh` CLI **`0.1.2-alpha.3`, `0.1.2-rc.1`, `0.1.5-rc.1`, or `0.1.5-rc.2`** on PATH and delegates
   every mutation to the public `dsh plugin` CLI with `--ignore-scripts` (pnpm 11 remove
   uses `--config.ignore-scripts=true`, not its unsupported shorthand). It verifies
   manifest postconditions and reports failures honestly; rc.1 does not promise rollback.
