@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.6 — installer: drop npm host peers; version-derived default source
+
+- Host packages (@deepseek-ai/cordis, dsh-*) are provided by the DSH profile
+  runtime, not npm peers. The peer declarations made `npx github:…#tag`  auto-resolve the whole host tree and fail with ERESOLVE (dsh-agent
+  ^0.1.7-alpha.1 resolves to 0.1.7-rc.1, whose cordis ~4.0.4 conflicts with
+  the exact 4.0.3 pin). peerDependencies removed; compatibility stays gated
+  by the installer's dsh CLI matrix.
+- Installer DEFAULT_SOURCE is now derived from the package version
+  (scripts/check.js lockstep contract adapted accordingly).
+
 ## 0.4.5 — check scope: Structured B archive suite moves out of default check
 
 - `npm run check` no longer runs `test:compaction-ab`. The retired Structured B

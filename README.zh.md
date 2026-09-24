@@ -28,16 +28,16 @@ reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值
 ## 安装（tag 存在后）
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6
 ```
 
 无参数等同 `install`；默认 profile 为 `web`。其他命令：
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 --help
 ```
 
 - 安装器要求 PATH 上存在精确版本 `dsh` CLI **`0.1.2-alpha.3`、`0.1.2-rc.1`、`0.1.5-rc.1` 或 `0.1.5-rc.2`**，所有变更都委托给公开

@@ -33,16 +33,16 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 --help
 ```
 
 - The installer requires the exact `dsh` CLI **`0.1.2-alpha.3`, `0.1.2-rc.1`, `0.1.5-rc.1`, or `0.1.5-rc.2`** on PATH and delegates
