@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NativeSessionState, NativeCompactionSeam } from '../src/native-seam.js';
+import { CodexNativeCompactionEngine } from '../src/compaction.js';
 import { BASIC_INSTRUCTION_FIRST_LINE } from '../src/native-checkpoint.js';
 import { CompactionRecovery, recoveryDelay } from '../src/recovery.js';
 
@@ -13,12 +14,23 @@ const drain = async stream => { const chunks = []; for await (const chunk of str
 function fixture({ failures = [], fallbackFailure, clock = () => Date.now() } = {}) {
   let opens = 0, native = 0, fallback = 0, closed = 0;
   const state = new NativeSessionState(true, undefined, { now: clock, delay: async () => {} });
-  const seam = new NativeCompactionSeam({ state, getRuntime: () => ({ applicability: () => ({ applicable: true }) }), adapter: {
+  const seam = { adapter: {
     async seamLease() { opens++; return { close() { closed++; } }; },
     async seamCompactOnLease() { const code = failures[native++]; if (code) throw failure(code); return { envelope: 'synthetic summary' }; },
-    async *seamStreamOnLease() { fallback++; if (fallbackFailure) throw failure(fallbackFailure); yield { type: 'finish', reason: { kind: 'stop' } }; },
-  } });
-  return { state, seam, run: (r = request()) => drain(seam.dispatch(r, () => { throw Error('unexpected stock route'); })), counts: () => ({ opens, native, fallback, closed }) };
+    async *seamStreamOnLease() {
+      fallback++; if (fallbackFailure) throw failure(fallbackFailure);
+      yield { type: 'block-start', index: 0, blockType: 'text' };
+      yield { type: 'text-delta', index: 0, text: 'fallback' };
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: 'fallback' } };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    },
+  } };
+  const engine = { config: { modelPolicies: [], summarizationProvider: '', maxTokens: 100 }, ctx: {
+    codexBridge: { nativeState: state, adapter: seam.adapter, nativeApplicability: async () => ({ applicable: true }) },
+  } };
+  return { state, seam, run: (r = request()) => CodexNativeCompactionEngine.prototype.summarize.call(engine,
+    { messages: r.messages.slice(0, -1) }, { session: { id: r.sessionId, requestHeader: () => ({ config: { provider: r.provider, model: r.model } }) } }, r.signal),
+    counts: () => ({ opens, native, fallback, closed }) };
 }
 
 test('expired lease timeout is preserved without any fallback', async () => {
@@ -28,16 +40,16 @@ test('expired lease timeout is preserved without any fallback', async () => {
   assert.equal(f.state.lastAttempt('s').outcome, 'failed');
 });
 
-test('transient failure uses one native retry and no text fallback', async () => {
+test('transient failure uses one text fallback and no native retry', async () => {
   const f = fixture({ failures: ['CODEX_RUNTIME_HTTP_503'] });
   await f.run();
-  assert.deepEqual(f.counts(), { opens: 1, native: 2, fallback: 0, closed: 1 });
+  assert.deepEqual(f.counts(), { opens: 1, native: 1, fallback: 1, closed: 1 });
 });
 
-test('native retry and text fallback cannot stack into a third request', async () => {
-  const f = fixture({ failures: ['CODEX_RUNTIME_NETWORK', 'CODEX_RUNTIME_HTTP_503'] });
+test('native failure and failed fallback cannot stack into a third request', async () => {
+  const f = fixture({ failures: ['CODEX_RUNTIME_NETWORK'], fallbackFailure: 'CODEX_RUNTIME_HTTP_503' });
   await assert.rejects(f.run(), { code: 'CODEX_RUNTIME_HTTP_503' });
-  assert.deepEqual(f.counts(), { opens: 1, native: 2, fallback: 0, closed: 1 });
+  assert.deepEqual(f.counts(), { opens: 1, native: 1, fallback: 1, closed: 1 });
 });
 
 test('fallback records actual failure rather than successful output', async () => {
@@ -86,17 +98,17 @@ test('ordinary task requests are not stopped by compaction cooldown', async () =
   await assert.rejects(f.run());
   let ordinary = 0;
   const r = request(); delete r.purpose;
-  await drain(f.seam.dispatch(r, async function* () { ordinary++; yield { type: 'finish', reason: { kind: 'stop' } }; }));
+  await drain(new NativeCompactionSeam({ state: f.state, adapter: f.seam.adapter }).dispatch(r, async function* () { ordinary++; yield { type: 'finish', reason: { kind: 'stop' } }; }));
   assert.equal(ordinary, 1);
   assert.equal(f.counts().opens, 1);
 });
 
-test('abort interrupts retry backoff and does not open a retry request', async () => {
+test('abort racing native failure prevents fallback and preserves cancellation', async () => {
   const controller = new AbortController();
-  const f = fixture({ failures: ['CODEX_RUNTIME_NETWORK'] });
-  f.state.recovery.delay = async (ms, signal) => { controller.abort(); await recoveryDelay(ms, signal); };
-  await assert.rejects(f.run({ ...request(), signal: controller.signal }), { code: 'CODEX_RUNTIME_CANCELLED' });
-  assert.equal(f.counts().native, 1);
+  const f = fixture();
+  f.seam.adapter.seamCompactOnLease = async () => { controller.abort(); throw failure('CODEX_RUNTIME_NETWORK'); };
+  await assert.rejects(f.run({ ...request(), signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(f.counts().fallback, 0);
   assert.equal(f.state.nativeStatus('s').recovery[0].failures, 0);
 });
 

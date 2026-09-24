@@ -29,7 +29,7 @@ export class CodexRuntimeBridge extends Service {
   validateCheckpoint(record, expected) { return this.runtime().validateCheckpoint(record, expected); }
   estimateCheckpoint(record) { return this.runtime().estimateCheckpoint(record); }
   setNativePreference(sessionId, mode) { return this.nativeState.setSession(sessionId, mode); }
-  nativePreferenceStatus(sessionId) { return this.nativeState.nativeStatus(sessionId); }
+  async nativePreferenceStatus(sessionId) { await this.nativeState.ready(sessionId); return this.nativeState.nativeStatus(sessionId); }
   /** Metadata-only; snapshot inspection never binds authentication or changes history. */
   compactionProgress(session) {
     const observed = this.progress.status(session);

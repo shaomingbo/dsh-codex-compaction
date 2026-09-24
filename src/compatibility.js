@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { TARGET_DSH, TARGET_DSH_VERSIONS, failure } from './constants.js';
 export { Service } from '@deepseek-ai/cordis';
+export { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic';
 export { isCompactCheckpointSource } from '@deepseek-ai/dsh-compaction';
 export { LlmAdapter, LlmError, BlockAssembler, resolveRetryPolicy, resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm';
 export { PiAiAdapter, Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
@@ -10,7 +11,8 @@ export { PiAiAdapter, Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
 const REQUIRED = [
   '@deepseek-ai/dsh-compaction', '@deepseek-ai/dsh-session',
   '@deepseek-ai/dsh-token-meter', '@deepseek-ai/dsh-llm',
-  '@deepseek-ai/dsh-llm-pi-ai', '@deepseek-ai/dsh-agent-presets', '@deepseek-ai/dsh-commands',
+  '@deepseek-ai/dsh-llm-pi-ai', '@deepseek-ai/dsh-agent-preset', '@deepseek-ai/dsh-agent-preset-registry', '@deepseek-ai/dsh-commands',
+  '@deepseek-ai/dsh-compaction-basic',
 ];
 function resolvedHostVersion() {
   const versions = REQUIRED.map((id) => {
@@ -28,8 +30,8 @@ function assertVersions() {
   resolvedHostVersion();
 }
 export function replaceSurfaceOp(start, end) {
-  const host = resolvedHostVersion();
-  return host === '0.1.5-rc.1' || host === '0.1.5-rc.2' ? { op: 'replace', startSeq: start, endSeq: end } : { op: 'replace', start, end };
+  resolvedHostVersion();
+  return { op: 'replace', startSeq: start, endSeq: end };
 }
 function systemMessageText(message) {
   if (typeof message?.content === 'string' && message.content.length > 0) return message.content;
@@ -85,6 +87,6 @@ export function assertProviderCompatibility(ctx) {
 }
 export function assertPolicyCompatibility(ctx) {
   assertVersions();
-  assertMethods(ctx, { commands: ['register'], agentPresets: ['copy', 'read', 'resolve', 'serviceFor'],
+  assertMethods(ctx, { commands: ['register'], agentPresets: ['resolve', 'serviceFor'],
     codexBridge: ['describe', 'compact', 'readCheckpoint', 'estimateCheckpoint', 'setNativePreference', 'nativePreferenceStatus', 'nativeApplicability', 'compactionProgress'] });
 }

@@ -2,6 +2,14 @@
 
 [中文](README.zh.md)
 
+## Unreleased 0.1.7-alpha.1 migration candidate
+
+This worktree targets **only DSH 0.1.7-alpha.1**. It has not been installed, published or GUI-accepted; the existing package/tag version remains historical, not a distribution of these changes. Sections below describe the old release and do not extend this candidate's support matrix.
+
+Select the declarative `codex-native-b` preset (standard plugins with a summarize-only `BasicCompactionEngine` subclass). `/codex-native on`, `reader-text`, or `off` is per-session; default is off. `nativeCompaction` enables capability, not preference. Basic alone selects, prunes, meters and persists. Owner-direct summaries never claim `llmStreamCall:true`; native usage comes only from observed receipts. Middleware is replay-only. Setup no longer copies or rewrites presets. Recovery uses public asynchronous `sessionQuery.readSession` command events. No automatic update of existing session preset snapshots is claimed.
+
+Synthetic tests retain the pi-ai 0.84.4 owner double against the target adapter. Live owner/pi-ai 0.85.1 replay, GUI, installation and production migration remain unverified. See `THIRD_PARTY_NOTICES.md` for copied standard declaration/instruction licensing.
+
 **0.4.2:** Session V3 current-surface system prompt for structured compaction, plus the
 `0.4.1` long-session native compact stability line. Does not claim `0.1.5-*`.
 
@@ -25,16 +33,16 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 --help
 ```
 
 - The installer requires the exact `dsh` CLI **`0.1.2-alpha.3`, `0.1.2-rc.1`, `0.1.5-rc.1`, or `0.1.5-rc.2`** on PATH and delegates

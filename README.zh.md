@@ -2,6 +2,14 @@
 
 [English](README.md)
 
+## 未发布的 0.1.7-alpha.1 迁移候选
+
+本工作树**仅面向 DSH 0.1.7-alpha.1**；未安装、未发布、未做 GUI 验收。包/tag 版本仍为历史版本，不代表这些变更已分发。下文历史发布说明不扩大本候选的兼容范围。
+
+选择声明式 `codex-native-b` preset（镜像 standard 插件，只替换为仅覆盖 summarize 的 Basic 子类）。`/codex-native on`、`reader-text`、`off` 按会话选择，默认 off；`nativeCompaction` 仅为能力开关，不强制 native。触发、剪枝、选择、计量与持久化全部继承 Basic；owner 直调返回未标记 SummaryResult，不设置 llmStreamCall:true，native 用量仅采用真实 receipt。中间件只读回放；setup 不再复制改写 preset；偏好经公开异步 sessionQuery.readSession 恢复命令事件。不承诺已存在会话的 preset 快照自动换装。
+
+合成测试保留 pi-ai 0.84.4 owner double 配合目标 adapter；真实 owner/pi-ai 0.85.1 回放、GUI、安装与生产历史迁移仍未验证。复制的官方声明/指令许可见 THIRD_PARTY_NOTICES.md。
+
 **0.4.2：**结构化压缩按 Session V3 当前 surface 读取系统提示；保留 `0.4.1` 长期会话原生压缩稳定性。不承诺 `0.1.5-*`。
 
 **历史版本 `0.3.3`** 修复原生检查点与用户/工具图片的混合回放，并支持同一 owner 下的混合历史
@@ -20,16 +28,16 @@ reader-text 摘要。采用公开 Pi 配置的图片像素/字节预算默认值
 ## 安装（tag 存在后）
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5
 ```
 
 无参数等同 `install`；默认 profile 为 `web`。其他命令：
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.3 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.5 --help
 ```
 
 - 安装器要求 PATH 上存在精确版本 `dsh` CLI **`0.1.2-alpha.3`、`0.1.2-rc.1`、`0.1.5-rc.1` 或 `0.1.5-rc.2`**，所有变更都委托给公开

@@ -10,6 +10,7 @@ import { fakeRuntime } from './helpers/fake-runtime.js';
 import { ROUTE } from '../src/constants.js';
 async function fixture(t) {
   const ctx = new Context();
+  ctx.provide('sessionQuery', { readSession: async () => ({ events: [] }) });
   let selectedEngine, lastAgent;
   class Presets extends Service {
     constructor() { super(ctx, 'agentPresets'); }

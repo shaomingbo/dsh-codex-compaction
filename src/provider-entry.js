@@ -6,12 +6,12 @@ import { commandLogPreferenceRecovery } from './preference-recovery.js';
 import { ROUTE, STANDARD_ROUTE, failure } from './constants.js';
 
 export const name = 'dsh-codex-compaction/provider';
-export const inject = ['llm'];
+export const inject = ['llm', 'sessionQuery'];
 
 /**
  * Generic DSH route/reader entry, separate from compaction policy and setup UI.
- * `nativeCompaction` is the profile-level preference and stays OFF by default;
- * per-session /codex-native overrides inherit from it.
+ * `nativeCompaction` gates the capability, never the session preference.
+ * Every session defaults OFF and opts in through /codex-native.
  */
 export function apply(ctx, config = {}) {
   if (Object.keys(config).some(key => key !== 'nativeCompaction')
@@ -24,9 +24,10 @@ export function apply(ctx, config = {}) {
   // Restart survival: the durable host command log (public events only)
   // restores an explicitly persisted per-session preference.
   const bridge = new CodexRuntimeBridge(ctx, () => currentRuntime, {
-    profileNative: config.nativeCompaction === true,
+    profileNative: false,
     recoverPreference: commandLogPreferenceRecovery(ctx),
   });
+  bridge.nativeCompaction = config.nativeCompaction !== false;
   ctx.on('session/event', (session, event) => {
     bridge.progress.observe(session, event);
     bridge.nativeState.recovery.observe(session, event);
@@ -51,9 +52,7 @@ export function apply(ctx, config = {}) {
   // Remains when the policy entry is disabled. Whole-package removal still
   // removes this bridge and requires preserving a compatible native reader.
   ctx.on('llm/stream', (options, next) => {
-    const explicitReader = options.provider === STANDARD_ROUTE && options.purpose === 'compaction'
-      && bridge.nativeState.sessionPreference(options.sessionId) === 'reader-text';
-    if (options.provider === ROUTE || (!explicitReader && !options.messages.some(isNativeCarrier))) return next();
+    if (options.provider === ROUTE || !options.messages.some(isNativeCarrier)) return next();
     // The seam (when the account capability is present) owns standard-route
     // carriers after account preparation; nothing else may carry them.
     if (options.provider === STANDARD_ROUTE && seamActive) return next();

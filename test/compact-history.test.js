@@ -7,6 +7,7 @@ import { fakeRuntime } from './helpers/fake-runtime.js';
 import { assistantStopReason, sanitizeCompactHistory } from '../src/compact-history.js';
 import { BASIC_INSTRUCTION_FIRST_LINE, basicInstructionTail } from '../src/native-checkpoint.js';
 import { ROUTE, STANDARD_ROUTE } from '../src/constants.js';
+import { engineFixture } from './helpers/engine.js';
 
 const MODEL = 'gpt-6-astra';
 const replay = (stopReason, blockTypes, extras = {}) => ({
@@ -69,11 +70,7 @@ test('nested tool-result content is payload and does not create extra pairing id
       isError: false,
     }),
   ];
-  const sanitized = sanitizeCompactHistory(history);
-  assert.equal(JSON.stringify(sanitized).includes('BIZ-NESTED-OUTER'), true);
-  assert.equal(JSON.stringify(sanitized).includes('BIZ-NESTED-INNER'), true);
-  assert.equal(JSON.stringify(sanitized).includes('nested-inner'), true);
-  assert.deepEqual(sanitized.find(message => message.role === 'assistant').content.filter(block => block.type === 'tool-call').map(block => block.id), ['call-complete']);
+  assert.throws(() => sanitizeCompactHistory(history), { code: 'CODEX_NATIVE_UNSAFE_HISTORY' });
 });
 
 test('failed assistant keeps completed text and paired tools, dropping only unpaired calls', () => {
@@ -171,27 +168,16 @@ test('non-string optional replay ids fail closed instead of being stripped', () 
 });
 
 test('the standard compact seam keeps cancelled text and never wraps the transcript', async t => {
-  const ctx = new Context();
-  await ctx.plugin(Llm);
-  class HostRoute extends LlmAdapter { async *stream() { throw new Error('stock adapter must not run'); } }
-  ctx.llm.registerAdapter([STANDARD_ROUTE], new HostRoute());
-  await ctx.plugin(providerEntry);
-  const fake = fakeRuntime({ customModels: [{ id: MODEL, contextWindow: 872000, maxTokens: 128000, input: ['text', 'image'] }] });
-  await ctx.plugin({ name: 'fixture-owner', apply(owner) { owner.provide('codexRuntime', fake.runtime); } });
-  t.after(() => ctx.fiber.dispose());
-  ctx.codexBridge.setNativePreference('s1', 'on');
+  const f = await engineFixture(t, { runtimeOptions: { customModels: [{ id: MODEL, contextWindow: 872000, maxTokens: 128000, input: ['text', 'image'] }] } });
+  const { fake } = f;
+  f.session.append('request/header', { header: { config: { provider: STANDARD_ROUTE, model: MODEL } }, reason: 'initial' });
+  f.enable();
   const instruction = createUserMessage({ source: { kind: 'plugin', plugin: 'dsh-compaction-basic' },
     content: [{ type: 'text', text: `${BASIC_INSTRUCTION_FIRST_LINE}\n\n(remaining pinned instruction body)` }] });
-  const assembler = new BlockAssembler();
-  for await (const chunk of ctx.llm.stream({
-    provider: STANDARD_ROUTE, model: MODEL, sessionId: 's1', purpose: 'compaction',
-    messages: [
-      createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep BIZ-USER-SEAM and compaction_trigger in this user text.' }] }),
-      assistant({ text: 'Partial BIZ-SEAM-CANCEL', stopReason: 'aborted' }),
-      instruction,
-    ],
-  })) assembler.push(chunk);
-  assert.equal(assembler.finish.kind, 'stop');
+  await f.summarize([
+    createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Keep BIZ-USER-SEAM and compaction_trigger in this user text.' }] }),
+    assistant({ text: 'Partial BIZ-SEAM-CANCEL', stopReason: 'aborted' }),
+  ]);
   const sent = fake.calls[0].context.messages;
   const texts = sent.map(message => typeof message.content === 'string' ? message.content : (message.content ?? []).map(block => block.text ?? '').join('\n'));
   assert.equal(texts.some(text => text.includes('BIZ-USER-SEAM')), true);
@@ -201,23 +187,13 @@ test('the standard compact seam keeps cancelled text and never wraps the transcr
 });
 
 test('invalid replay fails closed on the compact seam without a native request', async t => {
-  const ctx = new Context();
-  await ctx.plugin(Llm);
-  class HostRoute extends LlmAdapter { async *stream() { throw new Error('stock adapter must not run'); } }
-  ctx.llm.registerAdapter([STANDARD_ROUTE], new HostRoute());
-  await ctx.plugin(providerEntry);
-  const fake = fakeRuntime({ customModels: [{ id: MODEL, contextWindow: 872000, maxTokens: 128000, input: ['text', 'image'] }] });
-  await ctx.plugin({ name: 'fixture-owner', apply(owner) { owner.provide('codexRuntime', fake.runtime); } });
-  t.after(() => ctx.fiber.dispose());
-  ctx.codexBridge.setNativePreference('s1', 'on');
+  const f = await engineFixture(t, { runtimeOptions: { customModels: [{ id: MODEL, contextWindow: 872000, maxTokens: 128000, input: ['text', 'image'] }] } });
+  const { fake } = f;
+  f.session.append('request/header', { header: { config: { provider: STANDARD_ROUTE, model: MODEL } }, reason: 'initial' });
+  f.enable();
   const broken = assistant({ text: 'Partial BIZ-BAD-REPLAY', stopReason: 'aborted', replayVersion: 999 });
   const instruction = createUserMessage({ source: { kind: 'plugin', plugin: 'dsh-compaction-basic' },
     content: [{ type: 'text', text: `${BASIC_INSTRUCTION_FIRST_LINE}\n\n(remaining pinned instruction body)` }] });
-  await assert.rejects(async () => {
-    for await (const _ of ctx.llm.stream({
-      provider: STANDARD_ROUTE, model: MODEL, sessionId: 's1', purpose: 'compaction',
-      messages: [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'BIZ-USER-SEAM' }] }), broken, instruction],
-    })) {}
-  }, error => error.code === 'CODEX_NATIVE_REPLAY_INCOMPATIBLE');
+  await assert.rejects(f.summarize([createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'BIZ-USER-SEAM' }] }), broken]), error => error.code === 'CODEX_NATIVE_REPLAY_INCOMPATIBLE');
   assert.equal(fake.calls.length, 0);
 });

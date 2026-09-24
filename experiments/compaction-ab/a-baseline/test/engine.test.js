@@ -37,13 +37,13 @@ function addWork(session) {
   session.append('turn/start', { turn });
   session.append('user/message', user('Keep exact requirements and next action.'), { surfaceOp: 'append' });
   session.append('step/start', { turn, step: 1 });
-  session.append('assistant/message', { turn, step: 1, message: assistant('Large old tool analysis. '.repeat(400)) }, { surfaceOp: 'append' });
+  session.append('assistant/message', { turn, step: 1, stream: [], message: assistant('Large old tool analysis. '.repeat(400)) }, { surfaceOp: 'append' });
   session.append('step/end', { turn, step: 1 });
   session.append('turn/end', { turn, reason: { kind: 'completed' } });
   session.append('turn/start', { turn: turn + 1 });
   session.append('user/message', user('Continue from the latest state.'), { surfaceOp: 'append' });
   session.append('step/start', { turn: turn + 1, step: 1 });
-  session.append('assistant/message', { turn: turn + 1, step: 1, message: assistant('Latest state retained verbatim.') }, { surfaceOp: 'append' });
+  session.append('assistant/message', { turn: turn + 1, step: 1, stream: [], message: assistant('Latest state retained verbatim.') }, { surfaceOp: 'append' });
   session.append('step/end', { turn: turn + 1, step: 1 });
   session.append('turn/end', { turn: turn + 1, reason: { kind: 'completed' } });
 }

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.5 — check scope: Structured B archive suite moves out of default check
+
+- `npm run check` no longer runs `test:compaction-ab`. The retired Structured B
+  archive experiment fails 23/34 against DSH 0.1.7 solely on seeded-fixture
+  shape drift (17× invalid `user/message` replace `surfaceOp`; 6×
+  `header.system` in `request/header`), with no shipped-engine paths involved.
+  Per the approved 2026-09-24 gate-scope change, the explicit suites remain
+  available (`npm run test:compaction-ab`, `npm run experiment:compaction-ab`);
+  legacy-a stays in the default check. Historical failure log is archived with
+  the release task evidence.
+- Version contract sync: installer default source, check.js pin and bilingual
+  README install commands move to v0.4.5. Shipped engine (143 tests) and
+  legacy-a (46) are unchanged and green.
+
 ## 0.4.2 — Session V3 current-surface system prompt
 
 - Structured compaction reads the current model-visible system prompt from

@@ -18,7 +18,7 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(args) + '\\n');
 const mode = process.env.FAKE_MODE;
 if (args.length === 1 && args[0] === '--version') {
-  console.log(process.env.FAKE_VERSION || '0.1.2-rc.1');
+  console.log(process.env.FAKE_VERSION || '0.1.7-alpha.1');
   process.exit(mode === 'version-fail' ? 9 : 0);
 }
 if (args.length === 1 && args[0] === '--help') {
@@ -111,35 +111,14 @@ test('first/repeat install and uninstall use exact public argv and preserve unre
   ]);
 });
 
-test('exact alpha.3 CLI uses the same public transaction without broad version acceptance', (t) => {
-  const f = fixture(t);
-  const env = { FAKE_VERSION: '0.1.2-alpha.3' };
-  ok(f.run(['status'], env));
-  assert.equal(existsSync(f.home), false);
-  ok(f.run([], env));
-  const installed = f.raw();
-  ok(f.run(['install'], env));
-  ok(f.run(['status'], env));
-  assert.equal(f.raw(), installed);
-  ok(f.run(['uninstall'], env));
-  ok(f.run(['uninstall'], env));
-  assert.equal(mutations(f).length, 2);
-});
-
-test('exact 0.1.5-rc.1 CLI uses the same public transaction without broad version acceptance', (t) => {
-  const f = fixture(t);
-  const env = { FAKE_VERSION: '0.1.5-rc.1' };
-  ok(f.run(['status'], env));
-  assert.equal(existsSync(f.home), false);
-  ok(f.run([], env));
-  const installed = f.raw();
-  ok(f.run(['install'], env));
-  ok(f.run(['status'], env));
-  assert.equal(f.raw(), installed);
-  ok(f.run(['uninstall'], env));
-  ok(f.run(['uninstall'], env));
-  assert.equal(mutations(f).length, 2);
-});
+for (const version of ['0.1.2-alpha.3', '0.1.2-rc.1', '0.1.5-rc.1', '0.1.5-rc.2', '0.1.7-alpha.2']) {
+  test(`migration installer refuses unvalidated ${version} without mutation`, t => {
+    const f = fixture(t);
+    fails(f.run([], { FAKE_VERSION: version }), /Unsupported dsh CLI version/);
+    assert.equal(existsSync(f.home), false);
+    assert.equal(mutations(f).length, 0);
+  });
+}
 
 test('public CLI initializes absent profile; installer normalizes explicit relative links', (t) => {
   const f = fixture(t);
@@ -179,7 +158,7 @@ test('help works without a CLI or profile, and direct symlink invocation works',
   symlinkSync(installer, alias);
   const result = f.run(['--help'], { PATH: '' }, alias);
   ok(result);
-  assert.match(result.stdout, /0\.1\.2-rc\.1/);
+  assert.match(result.stdout, /0\.1\.7-alpha\.1/);
   assert.match(result.stdout, /candidate/);
   assert.equal(existsSync(f.home), false);
   assert.deepEqual(f.calls(), []);
@@ -197,7 +176,7 @@ test('malformed and ambiguous args fail before invoking dsh', (t) => {
 
 test('missing CLI fails closed for every operation even if no profile exists', (t) => {
   const f = fixture(t);
-  for (const command of ['install', 'status', 'uninstall']) fails(f.run([command], { PATH: '' }), /dsh is missing.*0\.1\.2-rc\.1/);
+  for (const command of ['install', 'status', 'uninstall']) fails(f.run([command], { PATH: '' }), /dsh is missing.*0\.1\.7-alpha\.1/);
   assert.equal(existsSync(f.home), false);
 });
 

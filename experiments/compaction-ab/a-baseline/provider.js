@@ -1,7 +1,7 @@
 // Archived A baseline: preserve pre-B production behavior for the A/B experiment.
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import { convertResponsesMessages, convertResponsesTools } from '@earendil-works/pi-ai/api/openai-responses-shared';
-import { LlmAdapter, LlmError, PiAiAdapter, BlockAssembler, attributionHeaders, resolveRetryPolicy } from './compatibility.js';
+import { LlmAdapter, LlmError, PiAiAdapter, PiAiConfig, BlockAssembler, attributionHeaders, resolveRetryPolicy } from './compatibility.js';
 import { encodeCheckpoint } from './checkpoint.js';
 import { NativeTransport } from './native-transport.js';
 import { prepareReplay, expandReplay, assertTextHistory } from './replay.js';
@@ -69,9 +69,17 @@ export class CodexLabAdapter extends LlmAdapter {
     return this.provider.getModels().map(model => ({ provider: ROUTE, id: model.id, name: model.name, inputModalities: ['text'] }));
   }
   profile(provider) {
+    // 0.1.7 profile schema: scalar defaults come from PiAiConfig, and the
+    // adapter reads modelErrors/configuredMaxTokens Maps plus the image budget
+    // fields on every resolved profile.
+    const defaults = PiAiConfig({ providers: { [NATIVE_PROVIDER]: {} } }).providers.get()[NATIVE_PROVIDER];
     return new Map([[NATIVE_PROVIDER, { provider: NATIVE_PROVIDER, displayName: DISPLAY_NAME,
-      streamIdleTimeoutMs: 120000, configuredMaxTokens: new Map(), retryPolicy: this.retryPolicy,
-      piProvider: provider }]]);
+      piProvider: provider,
+      streamIdleTimeoutMs: 120000,
+      maxRequestImageBytes: defaults.maxRequestImageBytes,
+      requestImagePixelBudget: defaults.requestImagePixelBudget,
+      requestImageMaxBytes: defaults.requestImageMaxBytes,
+      retryPolicy: this.retryPolicy, modelErrors: new Map(), configuredMaxTokens: new Map() }]]);
   }
   converter(provider, accessToken) {
     const profiles = this.profile(provider);

@@ -3,6 +3,14 @@
 // request from dropping usable completed work or wrapping the whole transcript
 // because one assistant turn finished as error/aborted.
 import { failure, ROUTE, NATIVE_PROVIDER } from './constants.js';
+import { toolPairingBalancedBefore, toolPairingBalancedAfter } from './engine-host.js';
+
+/** Boundary checks always delegate to the public V4 host implementation. */
+export function assertCompactionBoundaries(session, start, end) {
+  if (!toolPairingBalancedBefore(session, start) || !toolPairingBalancedAfter(session, end)) {
+    throw unsafe('Compaction boundary splits a tool call/result pair.');
+  }
+}
 
 const ERROR_STOPS = new Set(['error', 'aborted']);
 const STOP_REASONS = new Set(['stop', 'length', 'toolUse', 'error', 'aborted']);
@@ -87,7 +95,7 @@ export function assertToolPairingOrder(messages) {
   const seenResults = new Set();
   for (const message of messages) {
     const calls = toolIds(message, 'tool-call', 'id');
-    const results = toolIds(message, 'tool-result', 'toolCallId');
+    const results = message?.role === 'tool' && typeof message.toolCallId === 'string' ? [message.toolCallId] : [];
     if (calls.length && results.length) throw unsafe('A message cannot mix tool calls and tool results.');
     if (results.length) {
       for (const id of results) {
@@ -121,10 +129,13 @@ export function assertToolPairingOrder(messages) {
  */
 export function sanitizeCompactHistory(messages) {
   if (!Array.isArray(messages)) throw unsafe('Compact history must be a message list.');
+  if (messages.some(message => (message.content ?? []).some(block => block.type === 'tool-result'))) {
+    throw unsafe('V3 tool-result wrappers require official migration before compacting V4 history.');
+  }
   messages = messages.map(remapLegacyCompactMessage);
   const completed = new Set();
   for (const message of messages) {
-    for (const id of toolIds(message, 'tool-result', 'toolCallId')) completed.add(id);
+    if (message?.role === 'tool' && typeof message.toolCallId === 'string') completed.add(message.toolCallId);
   }
   const out = [];
   for (const message of messages) {

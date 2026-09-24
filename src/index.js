@@ -76,7 +76,7 @@ export function apply(ctx, config = {}) {
   assertPolicyCompatibility(ctx);
   ctx.effect(() => ctx.commands.register({
     name: 'codex-compact-setup',
-    description: 'Legacy compatibility: create the archived structured B preset (manual-only; not needed for standard sessions)',
+    description: 'Verify the declarative codex-native-b preset without copying or rewriting preset files',
     async handler(invocation) {
       if (invocation.rawInput.trim()) return { kind: 'error', text: 'Usage: /codex-compact-setup (no arguments)' };
       ctx.codexBridge.describe(); // Presence, not a login or network probe.
@@ -116,17 +116,17 @@ export function apply(ctx, config = {}) {
         return { kind: 'error', text: 'Reader-text requires an applicable standard openai-codex route and its Accounts native reader; no preference changed.' };
       }
       if (argument && argument !== 'status') ctx.codexBridge.setNativePreference(session.id, argument);
-      const status = ctx.codexBridge.nativePreferenceStatus(session.id);
+      const status = await ctx.codexBridge.nativePreferenceStatus(session.id);
       const preference = `Profile default: ${status.profile ? 'on' : 'off'}. Session: ${status.session}. Effective: ${status.effective ? 'ON' : 'OFF'}.`;
       const readiness = target.model
         ? (applicability.applicable
           ? `Native applicability for ${target.provider ?? 'openai-codex'}/${target.model}: ready${applicability.model?.contextWindow ? ` (resolved context ${applicability.model.contextWindow})` : ''}.`
-          : `Native applicability for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}). Requests stay on the original path.`)
+          : `Native applicability for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}). Opted-in compaction fails closed; ordinary text requests are unaffected.`)
         : 'No routed model yet; native applicability unknown until a request selects a model.';
       const history = `Last summarization attempt: ${attemptText(status.lastAttempt)}.`;
       const mode = `Summarization mode: ${status.summarizationMode}. Reader-text replays native state through the same owner into a text summary; it applies to the next official compaction, not ordinary generation. Use /compact while idle to request it now; /codex-native on returns to native output. No automatic strategy switch is enabled.`;
       return { kind: 'success', text: [`Native Codex compaction preference.`, preference, mode, readiness, history, recoveryText(status), diagnosticText(status),
-        'Profile enablement is a reviewed rollout step; OFF only stops new native creation, existing native state stays readable.'].join('\n') };
+        'Native summaries require this session to use the declarative codex-native-b preset; unchanged standard presets still summarize as text. Capability enablement does not opt in sessions. OFF stops new native creation; existing native state remains readable.'].join('\n') };
     },
   }));
   ctx.effect(() => ctx.commands.register({
@@ -144,14 +144,14 @@ export function apply(ctx, config = {}) {
       }
       if (engine?.config && typeof engine.compactIfNeeded === 'function') {
         const target = session?.requestHeader()?.config ?? invocation.agent?.options ?? {};
-        const status = session ? ctx.codexBridge.nativePreferenceStatus(session.id) : null;
+        const status = session ? await ctx.codexBridge.nativePreferenceStatus(session.id) : null;
         const applicability = target.model ? await ctx.codexBridge.nativeApplicability(target.model, invocation.signal) : { applicable: false, reason: 'NO_MODEL' };
         const auto = `Basic automatic compaction: ${engine.config.auto === false ? 'off' : 'on'} (official backend; triggers, retention, meter and shrink checks stay official).`;
         const native = status
           ? [`Native preference: effective ${status.effective ? 'ON' : 'OFF'} (session ${status.session}, profile ${status.profile ? 'on' : 'off'}).`,
             target.model ? (applicability.applicable
               ? `Native readiness for ${target.provider ?? 'openai-codex'}/${target.model}: ready.`
-              : `Native readiness for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}); text path continues unchanged.`)
+              : `Native readiness for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}); opted-in compaction fails closed.`)
               : 'Native readiness: unknown until a model is routed.',
             `Summarization mode: ${status.summarizationMode}.`,
             `Last attempt: ${attemptText(status.lastAttempt)}.`].join('\n')
@@ -161,7 +161,7 @@ export function apply(ctx, config = {}) {
         return { kind: 'success', text: [auto, native, recoveryText(status), diagnosticText(status), benefit, committed,
           'A streamed native summary counts only after official basic replaces history in the session log; this status observes that logical replacement and does not independently confirm host-owned disk persistence.'].join('\n') };
       }
-      return { kind: 'error', text: 'No compaction engine serves this session. Start a standard openai-codex session to see basic automatic compaction and native readiness; the legacy structured preset is compatibility-only.' };
+      return { kind: 'error', text: 'No compaction engine serves this session. Select the declarative codex-native-b preset for Basic-owned compaction and optional native summaries.' };
     },
   }));
 }

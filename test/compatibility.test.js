@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { compactionSystemPrompt, replaceSurfaceOp } from '../src/compatibility.js';
-import { Session } from '/Users/shaomingbo/.dsh/plugin-lab/isolated/dsh-015-rc.1/prefix/node_modules/.pnpm/@deepseek-ai+dsh-session@0.1.5-rc.1_@deepseek-ai+cordis@4.0.2_@deepseek-ai+dsh-scope@0._19a3f679910325ead5ac78e2fac662f7/node_modules/@deepseek-ai/dsh-session/lib/index.js';
-import { createSystemMessage } from '/Users/shaomingbo/.dsh/plugin-lab/isolated/dsh-015-rc.1/prefix/node_modules/.pnpm/@deepseek-ai+dsh-llm@0.1.5-rc.1_@deepseek-ai+cordis@4.0.2/node_modules/@deepseek-ai/dsh-llm/lib/index.js';
+import { Session } from '@deepseek-ai/dsh-session';
+import { createSystemMessage } from '@deepseek-ai/dsh-llm';
 
-test('replaceSurfaceOp uses start/end on the installed 0.1.2-rc.1 homogeneous host', () => {
-  assert.deepEqual(replaceSurfaceOp(3, 9), { op: 'replace', start: 3, end: 9 });
+test('legacy shape helper uses only V4 startSeq/endSeq on 0.1.7-alpha.1', () => {
+  assert.deepEqual(replaceSurfaceOp(3, 9), { op: 'replace', startSeq: 3, endSeq: 9 });
 });
 
 test('compactionSystemPrompt reads V3 snapshotEvents content blocks as the current system head', () => {

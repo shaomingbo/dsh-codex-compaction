@@ -36,15 +36,14 @@ export function isNativeCarrier(message) {
   return message.source.nativeCodex !== undefined
     || (message.content ?? []).some(block => block.type === 'text' && typeof block.text === 'string' && block.text.startsWith(PREFIX));
 }
-const contentHasImages = blocks => (blocks ?? []).some(block => block.type === 'image'
-  || (block.type === 'tool-result' && contentHasImages(block.content)));
+const contentHasImages = blocks => (blocks ?? []).some(block => block.type === 'image');
 /** Detect images, including durable images returned by tools. */
 export const historyHasImages = messages => messages.some(message => contentHasImages(message?.content));
 export function assertTextHistory(messages) {
   const inspect = blocks => {
     for (const block of blocks ?? []) {
       if (block.type === 'image') throw failure('CODEX_NATIVE_TEXT_ONLY', 'This manual native candidate supports text/tool histories only.');
-      if (block.type === 'tool-result') inspect(block.content);
+      if (block.type === 'tool-result') throw failure('CODEX_NATIVE_UNSAFE_HISTORY', 'Legacy tool-result blocks must be migrated to V4 tool-role messages before replay.');
     }
   };
   for (const message of messages) inspect(message.content);
@@ -213,6 +212,17 @@ export async function ownerCompact(adapter, request) {
   } finally { lease.close(); }
 }
 
+/** Fully resolved owner profile; schema owns scalar defaults, owner owns catalog/auth. */
+export function resolvedOwnerProfile(provider, retryPolicy, { modelErrors = new Map(), streamIdleTimeoutMs } = {}) {
+  const defaults = PiAiConfig({ providers: { [NATIVE_PROVIDER]: {} } }).providers.get()[NATIVE_PROVIDER];
+  return { provider: NATIVE_PROVIDER, displayName: DISPLAY_NAME, piProvider: provider,
+    streamIdleTimeoutMs: streamIdleTimeoutMs ?? defaults.streamIdleTimeoutMs,
+    maxRequestImageBytes: defaults.maxRequestImageBytes,
+    requestImagePixelBudget: defaults.requestImagePixelBudget,
+    requestImageMaxBytes: defaults.requestImageMaxBytes,
+    retryPolicy, modelErrors: new Map(modelErrors), configuredMaxTokens: new Map() };
+}
+
 export class OwnerBoundCodexAdapter extends LlmAdapter {
   constructor(getRuntime, { resolveAttachments, resolveImageAccess } = {}) {
     super();
@@ -225,18 +235,8 @@ export class OwnerBoundCodexAdapter extends LlmAdapter {
   route(provider) { if (provider !== ROUTE) throw new LlmError('This adapter does not own that provider route.', 'NO_ADAPTER'); }
   providerInfo(provider) { this.route(provider); return { id: ROUTE, name: DISPLAY_NAME }; }
   providerRetryPolicy(provider) { this.route(provider); return this.retry; }
-  converter(provider) {
-    // Use the public Pi idle watchdog for both replay/text and native output.
-    // Owner setup/total deadlines remain separate; native retains its 300s cap.
-    const streamIdleTimeoutMs = 300000;
-    // PiAiAdapter accepts already-resolved profiles; it does not apply defaults.
-    // Obtain the three image bounds from the published schema, not private code
-    // or a second set of constants. Owner auth/models/retry/deadlines stay ours.
-    const { maxRequestImageBytes, requestImagePixelBudget, requestImageMaxBytes } =
-      PiAiConfig({ providers: { [NATIVE_PROVIDER]: {} } }).providers[NATIVE_PROVIDER];
-    const profiles = new Map([[NATIVE_PROVIDER, { provider: NATIVE_PROVIDER, displayName: DISPLAY_NAME,
-      piProvider: provider, configuredMaxTokens: new Map(), retryPolicy: this.retry, streamIdleTimeoutMs,
-      maxRequestImageBytes, requestImagePixelBudget, requestImageMaxBytes }]]);
+  converter(provider, profileOptions) {
+    const profiles = new Map([[NATIVE_PROVIDER, resolvedOwnerProfile(provider, this.retry, profileOptions)]]);
     return new PiAiAdapter({ profiles: () => profiles, resolveApiKey: async () => undefined,
       auth: { credentials: EMPTY_CREDENTIALS, authContext: NO_AMBIENT },
       resolveAttachments: this.resolveAttachments, resolveImageAccess: this.resolveImageAccess,

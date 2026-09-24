@@ -9,7 +9,7 @@ export function fakeAttachments() {
     signal?.throwIfAborted();
     assert.deepEqual(ref, imageRef);
     // The real store rejects omitted request-policy defaults with this code.
-    for (const key of ['maxPixels', 'maxBytes']) {
+    for (const key of ['width', 'height', 'maxBytes']) {
       if (!Number.isSafeInteger(policy?.[key]) || policy[key] <= 0) throw Object.assign(new Error(`${key} must be positive`), { code: 'INVALID_ATTACHMENT_REF' });
     }
     reads.push({ ref, policy });
