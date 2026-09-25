@@ -1,7 +1,10 @@
 import { BasicCompactionEngine, BlockAssembler } from './compatibility.js';
-import { STANDARD_ROUTE, ROUTE, failure } from './constants.js';
+import { STANDARD_ROUTE, ROUTE, failure, ENGINE_ALGORITHM_VERSION } from './constants.js';
 import { historyHasImages, isNativeCarrier, operationDiagnostic } from './runtime-adapter.js';
 import { isRecoverableNativeFailure } from './native-seam.js';
+import { sanitizeCompactHistory } from './compact-history.js';
+import { isDeterministicLocalFailure, inputFingerprint } from './recovery.js';
+import { assessDeferral, GUARD_ALGORITHM } from './request-guard.js';
 import { COMPACTION_INSTRUCTION, READER_FIDELITY_NOTE } from './summary-instruction.js';
 
 export const name = 'dsh-codex-compaction/compaction';
@@ -18,12 +21,34 @@ export class CodexNativeCompactionEngine extends BasicCompactionEngine {
     await state.ready(sessionId);
     signal?.throwIfAborted();
     const conversation = agent.session.requestHeader()?.config ?? agent.options;
-    const policy = this.config.modelPolicies.find(p => p.provider === conversation?.provider && p.model === conversation?.model);
-    const provider = policy?.summarizationProvider ?? this.config.summarizationProvider;
-    const model = policy?.summarizationModel ?? this.config.summarizationModel;
+    const routePolicy = this.config.modelPolicies.find(p => p.provider === conversation?.provider && p.model === conversation?.model);
+    const provider = routePolicy?.summarizationProvider ?? this.config.summarizationProvider;
+    const model = routePolicy?.summarizationModel ?? this.config.summarizationModel;
     const target = provider ? { provider, model } : conversation;
     const carriers = input.messages.some(isNativeCarrier);
-    const enabled = bridge.nativeCompaction !== false && state.effective(sessionId);
+    // The preset-local native default, guard config, and retention switch are
+    // resolved per AGENT through the official preset registry (the same
+    // serviceFor mechanism the root bridge uses), so a Native-preset default
+    // never leaks into standard presets sharing the root bridge, and no realm
+    // visibility assumption is involved. Absent row (standard presets or a
+    // minimal host context) keeps Basic, no guard, no hints.
+    let presetNative = false;
+    let guardConfig;
+    let sourceRetention = false;
+    try {
+      const presets = typeof this.ctx?.get === 'function' ? this.ctx.get('agentPresets') : undefined;
+      const presetPolicy = typeof presets?.serviceFor === 'function' ? presets.serviceFor(agent, 'codexNativePolicy') : undefined;
+      presetNative = typeof presetPolicy?.presetNativeDefault === 'function' && presetPolicy.presetNativeDefault() === true;
+      if (typeof presetPolicy?.efficiencyGuard === 'function') {
+        guardConfig = presetPolicy.efficiencyGuard();
+        if (guardConfig === null) throw failure('CODEX_NATIVE_CONFIG', 'The preset efficiency guard configuration is malformed.');
+      }
+      if (typeof presetPolicy?.sourceRetention === 'function') sourceRetention = presetPolicy.sourceRetention() === true;
+    } catch (error) {
+      if (error?.code === 'CODEX_NATIVE_CONFIG') throw error;
+      presetNative = false;
+    }
+    const enabled = bridge.nativeCompaction !== false && state.effective(sessionId, presetNative);
     const supported = [STANDARD_ROUTE, ROUTE].includes(target?.provider);
     if (!enabled || !supported) {
       if (carriers) throw failure('CODEX_NATIVE_READER_REQUIRED', 'Native checkpoint compaction requires its enabled matching owner reader.');
@@ -40,17 +65,25 @@ export class CodexNativeCompactionEngine extends BasicCompactionEngine {
     const images = historyHasImages(input.messages);
     if (images && !carriers && !explicitReader) return super.summarize(input, agent, signal);
     const readerText = explicitReader || images;
-    const maxTokens = policy?.maxTokens ?? this.config.maxTokens;
+    const maxTokens = routePolicy?.maxTokens ?? this.config.maxTokens;
+    // Config identity for the deterministic fingerprint and the guard: the
+    // summarization target, output budget, and guard policy.
+    const configVersion = JSON.stringify([ENGINE_ALGORITHM_VERSION, target?.provider, target?.model,
+      maxTokens ?? null, guardConfig === undefined ? 'guard:off' : { 'guard': guardConfig, algorithm: GUARD_ALGORITHM },
+      sourceRetention ? 'retention:source-aware-v1' : 'retention:off']);
     const options = { provider: target.provider, model: target.model, sessionId, purpose: 'compaction',
       messages: [...input.messages, { role: 'user', content: [{ type: 'text', text: COMPACTION_INSTRUCTION
         + (explicitReader ? `\n\n${READER_FIDELITY_NOTE}` : '') }] }],
-      ...(input.tools === undefined ? {} : { tools: [...input.tools] }), maxTokens, signal };
+      ...(input.tools === undefined ? {} : { tools: [...input.tools] }), maxTokens, signal,
+      fingerprint: { digest: inputFingerprint(input.messages, input.tools), configVersion } };
     const adapter = bridge.adapter;
     const flight = state.recovery.begin(options);
     let lease, kind = readerText ? 'reader-text' : 'native', cause;
     const record = extra => state.recordAttempt(sessionId, { kind, model: target.model,
       ...(readerText ? { reason: explicitReader ? 'explicit-reader-text' : 'image-history' } : {}),
       ...(cause ? { cause } : {}), ...extra });
+    const defer = reason => failure('CODEX_NATIVE_COMPACTION_DEFERRED',
+      `Native compaction deferred before any request (${reason}); this is a local efficiency decision, not a remote failure. Manual /compact bypasses efficiency deferral.`);
     const text = async () => {
       const assembler = new BlockAssembler();
       let terminal = false;
@@ -68,14 +101,48 @@ export class CodexNativeCompactionEngine extends BasicCompactionEngine {
       return { summary, rawOutput, provider: target.provider, model: target.model, maxTokens,
         ...(assembler.usage === undefined ? {} : { usage: assembler.usage }) };
     };
+    // Snapshot the last attempt BEFORE recording 'running', so the guard's
+    // config comparison reads the PREVIOUS attempt (not the current one that
+    // is about to overwrite it). Successful outcomes AND deferrals carry the
+    // configVersion that produced them, preserving the comparison baseline
+    // across consecutive deferrals. Reader-text attempts do not carry the
+    // guard baseline (different code path).
+    const previousAttempt = state.lastAttempt(sessionId);
+    const baselineConfigVersion = previousAttempt && ['native', 'fallback-text', 'deferred'].includes(previousAttempt.outcome)
+      && previousAttempt.configVersion !== undefined
+      ? previousAttempt.configVersion : undefined;
     record({ outcome: 'running' });
     try {
+      // Pure-local history/schema prechecks run BEFORE any lease opens, so a
+      // deterministically bad input can never reach the remote request path.
+      if (!readerText) sanitizeCompactHistory(input.messages);
+      // Efficiency guard (preset-opt-in): assess with bounded observer facts
+      // only, before any HTTP. Unknown measurements never defer.
+      if (!readerText && guardConfig !== undefined) {
+        // Read the last COMMITTED result from the observer — not `latest`,
+        // which is overwritten to 'pending' when the current transaction's
+        // compaction/start event arrives before summarize executes.
+        const lastCommitted = bridge.progress.status(agent.session)?.lastCommitted ?? null;
+        // Configuration-change protection: the guard baseline must come from
+        // the SAME configuration that produced it. A changed config (guard
+        // parameters, summarization target, output budget, retention switch)
+        // invalidates the previous commit as a comparison baseline, so the
+        // guard must NOT defer on it. The baseline is read from the attempt
+        // recorded BEFORE this run's 'running' marker overwrote it.
+        const configChanged = baselineConfigVersion !== undefined && baselineConfigVersion !== configVersion;
+        let currentSurfaceTokens;
+        try { currentSurfaceTokens = this.ctx.tokenMeter?.measure(agent.session)?.surfaceTokens; }
+        catch { currentSurfaceTokens = undefined; }
+        const verdict = assessDeferral({ manual: state.recovery.manualCompaction(sessionId), latest: lastCommitted,
+          currentSurfaceTokens, nowMs: state.recovery.now(), ...(configChanged ? { configChanged: true } : {}) }, guardConfig);
+        if (verdict.defer) throw defer(verdict.reason);
+      }
       lease = await adapter.seamLease({ model: target.model, signal });
       let result;
       if (readerText) result = await text();
       else {
         let native;
-        try { native = await adapter.seamCompactOnLease(lease, { model: target.model, messages: input.messages, tools: input.tools, signal }); }
+        try { native = await adapter.seamCompactOnLease(lease, { model: target.model, messages: input.messages, tools: input.tools, signal, retention: sourceRetention }); }
         catch (error) {
           if (carriers || !isRecoverableNativeFailure(error, signal)) throw error;
           // Exactly one text fallback, on the SAME lease/account. No native retry.
@@ -87,11 +154,26 @@ export class CodexNativeCompactionEngine extends BasicCompactionEngine {
           ...(native.usage === undefined ? {} : { usage: native.usage }) };
       }
       signal?.throwIfAborted();
-      record({ outcome: kind === 'fallback' ? 'fallback-text' : kind, diagnostics: operationDiagnostic(lease) });
+      const diagnostics = operationDiagnostic(lease);
+      record({ outcome: kind === 'fallback' ? 'fallback-text' : kind, configVersion,
+        ...(diagnostics?.requests !== undefined ? { httpRequests: diagnostics.requests } : {}), diagnostics });
       return result;
     } catch (error) {
+      if (error.code === 'CODEX_NATIVE_COMPACTION_DEFERRED') {
+        // A deferral is not a summary, not a fallback and not a remote failure:
+        // HTTP stays 0, no history is written, and it never counts as a
+        // failure for cooldown or fingerprint purposes.
+        flight.ignored = true;
+        record({ outcome: 'deferred', reason: error.message.match(/\(([^)]+)\)/)?.[1] ?? 'low-gain', httpRequests: 0, configVersion });
+        throw error;
+      }
       record({ outcome: 'failed', cause: cause ?? error.code, failure: error.code, diagnostics: operationDiagnostic(lease, error) });
       if (signal?.aborted || error.name === 'AbortError' || ['ABORTED', 'CODEX_RUNTIME_CANCELLED'].includes(error.code)) flight.ignored = true;
+      else if (isDeterministicLocalFailure(error)) {
+        // Deterministic local failure: block the exact input+config instead of
+        // arming the transient 60s cooldown.
+        state.recovery.deterministic(flight, { digest: options.fingerprint.digest, configVersion, errorClass: error.code });
+      }
       else state.recovery.fail(flight, error.code);
       signal?.throwIfAborted();
       throw error;

@@ -32,7 +32,7 @@ export function prepareReplay(messages, expected) {
   const replacements = new Map();
   const mapped = messages.map(message => {
     const texts = markerTexts(message);
-    if (isCompactCheckpointSource(message.source) && texts.length) {
+    if (message?.source !== undefined && isCompactCheckpointSource(message.source) && texts.length) {
       if (texts.length !== 1) throw failure('CODEX_LAB_BAD_CHECKPOINT', 'A compact message must contain exactly one native envelope.');
       const checkpoint = decodeCheckpoint(texts[0], expected);
       if (!checkpoint) throw failure('CODEX_LAB_BAD_CHECKPOINT', 'Native envelope framing changed; refusing text fallback.');

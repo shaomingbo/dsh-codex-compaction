@@ -27,7 +27,7 @@ function work(session, open = false) {
   session.append('turn/start', { turn });
   session.append('user/message', user('Requirements. '.repeat(200)), { surfaceOp: 'append' });
   session.append('step/start', { turn, step: 1 });
-  session.append('assistant/message', { turn, step: 1, message: assistant([{ type: 'text', text: 'Old analysis. '.repeat(500) }]) }, { surfaceOp: 'append' });
+  session.append('assistant/message', { turn, step: 1, stream: [], message: assistant([{ type: 'text', text: 'Old analysis. '.repeat(500) }]) }, { surfaceOp: 'append' });
   session.append('step/end', { turn, step: 1 });
   session.append('user/message', user('Keep latest unit verbatim.'), { surfaceOp: 'append' });
   if (!open) session.append('turn/end', { turn, reason: { kind: 'completed' } });
@@ -125,7 +125,7 @@ test('tool-pair split rejected and manual retains the entire last balanced tool 
   const f = await fixture(t); work(f.session, true);
   const turn = events(f.session, 'turn/start').at(-1).data.turn;
   f.session.append('step/start', { turn, step: 2 });
-  const call = f.session.append('assistant/message', { turn, step: 2, message: assistant([{ type: 'tool-call', id: 'tool-1', name: 'fixture', arguments: '{}' }]) }, { surfaceOp: 'append' });
+  const call = f.session.append('assistant/message', { turn, step: 2, stream: [], message: assistant([{ type: 'tool-call', id: 'tool-1', name: 'fixture', arguments: '{}' }]) }, { surfaceOp: 'append' });
   await assert.rejects(f.engine.compactRegion(f.session.surface.nodes[0], call.seq, f.agent, signal()), /pairing/);
   f.session.append('tool/call', { turn, step: 2, callId: 'tool-1', name: 'fixture', arguments: '{}' });
   const tool = f.session.append('tool/result', { turn, step: 2, message: createToolResultMessage({ callId: 'tool-1', content: [{ type: 'text', text: 'result' }], isError: false }) }, { surfaceOp: 'append' });
@@ -171,7 +171,7 @@ test('manual selected-span replacement while in flight fails changed', async t =
   const f = await fixture(t, async () => { started.resolve(); await release.promise; return native(); }); work(f.session);
   const nodes = [...f.session.surface.nodes];
   const pending = f.engine.compactNow(f.agent, signal()); await started.promise;
-  f.session.append('user/message', user('replacement'), { surfaceOp: { op: 'replace', start: nodes[0], end: nodes[1] }, sourceEventSeqs: nodes.slice(0, 2) });
+  f.session.append('user/message', user('replacement'), { surfaceOp: { op: 'replace', startSeq: nodes[0], endSeq: nodes[1] }, sourceEventSeqs: nodes.slice(0, 2) });
   release.resolve();
   await assert.rejects(pending, { code: 'changed' });
   assert.equal(events(f.session, 'compaction/end').length, 1);
@@ -248,9 +248,9 @@ function appendUsage(session, { usage = fixtureUsage, interrupted = false, befor
   const step = session.append('step/start', { turn, step: 1 });
   if (beforeOutput) beforeOutput();
   const message = session.append('assistant/message', {
-    turn, step: 1, message: assistant([{ type: 'text', text: 'Reported synthetic usage response.' }]),
+    turn, step: 1, stream: [], message: assistant([{ type: 'text', text: 'Reported synthetic usage response.' }]),
     ...(usage === null ? {} : { usage }), ...(interrupted ? { interrupted: true } : {}),
-  }, { surfaceOp: 'append', ...(interrupted ? { sourceEventSeqs: [] } : {}) });
+  }, { surfaceOp: 'append' });
   session.append('step/end', { turn, step: 1 });
   session.append('turn/end', { turn, reason: { kind: 'completed' } });
   return { stepSeq: step.seq, assistantSeq: message.seq };
@@ -263,7 +263,7 @@ test('usage already covers hidden checkpoint; tail append adds only the new delt
   const anchor = appendUsage(f.session);
   const initial = measureEffective(f.session, f.ctx.tokenMeter, price);
   assert.equal(initial.hostMeasurement.baseline.kind, 'usage');
-  assert.equal(initial.hostTokens, fixtureUsage.totalTokens);
+  assert.equal(initial.hostTokens, fixtureUsage.totalTokens + initial.hostMeasurement.surfaceDeltaTokens);
   assert.equal(initial.effectiveTokens, initial.hostTokens);
   assert.equal(initial.anchorAdjustment.assistantSeq, anchor.assistantSeq);
   assert.equal(initial.anchorAdjustment.stepStartSeq, anchor.stepSeq);
@@ -297,7 +297,7 @@ test('recompaction subtracts old anchor payload; same-count later usage reanchor
   const second = measureEffective(f.session, f.ctx.tokenMeter, price);
   assert.equal(second.anchorAdjustment.assistantSeq, secondAnchor.assistantSeq);
   assert.notEqual(second.anchorAdjustment.assistantSeq, firstAnchor.assistantSeq);
-  assert.equal(second.effectiveTokens, fixtureUsage.totalTokens);
+  assert.equal(second.effectiveTokens, fixtureUsage.totalTokens + second.hostMeasurement.surfaceDeltaTokens);
   assert.equal(second.anchorAdjustment.correctionTokens, 0);
   // Prefix reconstruction is deterministic after actual public Session restore.
   const restored = Session.create(f.session.id, JSON.parse(JSON.stringify(f.session.snapshotEvents())), f.session.header);
@@ -315,11 +315,11 @@ test('in-step checkpoint replacement is not retroactively covered by assistant u
   changed.source.nativeAB.items[0].encrypted_content = 'changed'.repeat(10);
   const delta = price(changed.source.nativeAB) - price(original.source.nativeAB);
   const anchor = appendUsage(f.session, { beforeOutput: () => {
-    f.session.append('user/message', changed, { surfaceOp: { op: 'replace', start: originalSeq, end: originalSeq }, sourceEventSeqs: [originalSeq] });
+    f.session.append('user/message', changed, { surfaceOp: { op: 'replace', startSeq: originalSeq, endSeq: originalSeq }, sourceEventSeqs: [originalSeq] });
   } });
   const measured = measureEffective(f.session, f.ctx.tokenMeter, price);
-  assert.equal(measured.hostTokens, fixtureUsage.totalTokens);
-  assert.equal(measured.effectiveTokens, fixtureUsage.totalTokens + delta);
+  assert.equal(measured.hostTokens, fixtureUsage.totalTokens + measured.hostMeasurement.surfaceDeltaTokens);
+  assert.equal(measured.effectiveTokens, fixtureUsage.totalTokens + measured.hostMeasurement.surfaceDeltaTokens + delta);
   assert.equal(measured.anchorAdjustment.correctionTokens, delta);
   assert.equal(measured.anchorAdjustment.stepStartSeq, anchor.stepSeq);
 });
@@ -332,7 +332,8 @@ test('interrupted explicit-empty provider output keeps durable suffix outside us
   const measured = measureEffective(f.session, f.ctx.tokenMeter, price);
   assert.equal(measured.hostMeasurement.baseline.kind, 'usage');
   const suffix = f.ctx.tokenMeter.estimateMessage(f.session.eventAt(anchor.assistantSeq).data.message);
-  assert.equal(measured.hostTokens, fixtureUsage.totalTokens + suffix);
+  assert.equal(measured.hostTokens, fixtureUsage.totalTokens + measured.hostMeasurement.surfaceDeltaTokens);
+  assert.ok(measured.hostMeasurement.surfaceDeltaTokens >= suffix, 'the meter prices the anchor node at least at its message estimate');
   assert.equal(measured.effectiveTokens, measured.hostTokens);
   assert.equal(measured.anchorAdjustment.correctionTokens, 0);
   // Missing usage on a later interrupted call supersedes the older usage anchor.

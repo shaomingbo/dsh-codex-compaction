@@ -83,6 +83,7 @@ export class CompactionProgress {
     const flight = entry.flight;
     flight.result.outcome = outcome;
     flight.result.durationMs = elapsed(flight.startedAt, time);
+    flight.result.endedAtMs = time;
     if (outcome !== 'committed') this.#unknown(flight, outcome === 'failed' ? 'compaction-error' : 'incomplete-lifecycle');
     else if (flight.result.comparison.reason === null) {
       const { shadowedTokens, framedReplacementTokens } = flight.result;
@@ -92,6 +93,10 @@ export class CompactionProgress {
     }
     entry.counts[outcome]++;
     entry.latest = flight.result;
+    // Preserve the last COMMITTED result across subsequent compactions: the
+    // efficiency guard needs it as a comparison baseline even when a new
+    // transaction has already set `latest` to its own pending result.
+    if (outcome === 'committed') entry.lastCommitted = flight.result;
     entry.flight = null;
   }
 
@@ -132,7 +137,7 @@ export class CompactionProgress {
         compactionId: id, outcome: 'pending',
         beforePressure: this.#pressure(measured), afterPressure: null,
         shadowedTokens: null, framedReplacementTokens: null, netFreedTokens: null,
-        durationMs: null,
+        durationMs: null, endedAtMs: null, afterSurfaceTokens: null,
         stepInterval: entry.previousStartStep === null ? null : entry.steps - entry.previousStartStep,
         comparison: { basis: 'fixed-heuristic-message-delta', reason: null },
       };
@@ -157,7 +162,9 @@ export class CompactionProgress {
     if (event.type === 'user/message' && flight.summarySeq !== null && !flight.replaced
         && event.sourceEventSeqs?.includes(flight.summarySeq)
         && event.surfaceOp?.op === 'replace'
-        && event.surfaceOp.start === flight.range.start && event.surfaceOp.end === flight.range.end
+        // Host replacement events carry startSeq/endSeq (0.1.7 schema); the
+        // historical start/end misread made every legitimate commit unknown.
+        && event.surfaceOp.startSeq === flight.range.start && event.surfaceOp.endSeq === flight.range.end
         && surface?.nodes.includes(event.seq)) {
       ownReplacement = true;
       flight.replaced = true;
@@ -194,6 +201,9 @@ export class CompactionProgress {
     if (event.type === 'compaction/end' && id === flight.result.compactionId) {
       const measured = current ? this.#measurement(session, surface) : null;
       flight.result.afterPressure = this.#pressure(measured);
+      // Surface size at commit time is the guard's growth baseline; it is a
+      // bounded heuristic measurement, not a provider token count.
+      flight.result.afterSurfaceTokens = nonnegative(measured?.surfaceTokens) ? measured.surfaceTokens : null;
       if (!measured) this.#unknown(flight, 'measurement-unavailable');
       this.#finish(entry, event.data.error !== undefined ? 'failed' : flight.replaced ? 'committed' : 'unknown', time);
     } else if (event.type === 'session/end-seed') {
@@ -203,7 +213,10 @@ export class CompactionProgress {
 
   status(session) {
     const entry = this.#entries.get(session?.id);
-    const result = structuredClone({ observed: !!entry, counts: entry?.counts ?? counts(), latest: entry?.latest ?? null });
+    const result = structuredClone({ observed: !!entry, counts: entry?.counts ?? counts(), latest: entry?.latest ?? null,
+      // The last COMMITTED result, preserved across subsequent pending
+      // transactions; the efficiency guard reads this, not `latest`.
+      lastCommitted: entry?.lastCommitted ?? null });
     if (entry?.flight) result.latest.durationMs = elapsed(entry.flight.startedAt, this.#time());
     return result;
   }

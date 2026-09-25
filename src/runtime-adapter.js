@@ -1,5 +1,5 @@
 // Generic DSH-to-owner-capability adapter. No OAuth, endpoint, or model catalog ownership.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { LlmAdapter, LlmError, PiAiAdapter, PiAiConfig, BlockAssembler, resolveRetryPolicy, isCompactCheckpointSource } from './compatibility.js';
 import { ROUTE, STANDARD_ROUTE, NATIVE_PROVIDER, DISPLAY_NAME, failure } from './constants.js';
 import { remapLegacyCompactMessage, sanitizeCompactHistory } from './compact-history.js';
@@ -40,13 +40,16 @@ const contentHasImages = blocks => (blocks ?? []).some(block => block.type === '
 /** Detect images, including durable images returned by tools. */
 export const historyHasImages = messages => messages.some(message => contentHasImages(message?.content));
 export function assertTextHistory(messages) {
-  const inspect = blocks => {
-    for (const block of blocks ?? []) {
+  // V4 tool-role messages legitimately carry tool-result blocks as nested
+  // payload data; only non-tool messages with tool-result blocks are legacy
+  // V3 wrappers that require migration.
+  for (const message of messages) {
+    if (message?.role === 'tool') continue;
+    for (const block of message.content ?? []) {
       if (block.type === 'image') throw failure('CODEX_NATIVE_TEXT_ONLY', 'This manual native candidate supports text/tool histories only.');
       if (block.type === 'tool-result') throw failure('CODEX_NATIVE_UNSAFE_HISTORY', 'Legacy tool-result blocks must be migrated to V4 tool-role messages before replay.');
     }
-  };
-  for (const message of messages) inspect(message.content);
+  }
 }
 export function requireRuntime(runtime) {
   const methods = ['describe', 'models', 'open', 'encodeCheckpoint', 'decodeCheckpoint', 'validateCheckpoint', 'estimateCheckpoint'];
@@ -173,12 +176,55 @@ async function* streamOnLease(adapter, lease, options) {
   yield* relayOwnerChunks(adapter.converter(provider).stream({ ...options, provider: NATIVE_PROVIDER, messages: history.messages }));
 }
 
+/** Source category for one durable message, from its SOURCE metadata — never
+ * from the role or from what the text looks like. Only the owner-verified
+ * vocabulary crosses the seam. */
+export function messageSourceCategory(message) {
+  const source = message?.source;
+  if (source === undefined || source === null || typeof source !== 'object') return 'unknown';
+  if (isCompactCheckpointSource(source)) return 'checkpoint-wrapper';
+  if (source.kind === 'plugin') return 'host-notice';
+  if (source.kind === 'user') return 'user-instruction';
+  return 'unknown';
+}
+function messageText(message) {
+  if (typeof message?.content === 'string') return message.content;
+  return (message?.content ?? []).map(block => block?.type === 'text' && typeof block.text === 'string' ? block.text : '').join('');
+}
+/** Build the source-aware retention hint envelope: categories and text
+ * verification digests ONLY — no message text crosses the seam. A digest whose
+ * text carries conflicting categories degrades to unknown (kept). */
+export function buildRetentionHints(messages) {
+  const byDigest = new Map();
+  for (const message of messages) {
+    const text = messageText(message);
+    if (!text) continue;
+    const digest = createHash('sha256').update(text).digest('hex');
+    const category = messageSourceCategory(message);
+    const existing = byDigest.get(digest);
+    if (existing === undefined) byDigest.set(digest, category);
+    else if (existing !== category) byDigest.set(digest, 'unknown');
+  }
+  return { version: 1, algorithm: 'source-aware-v1', items: [...byDigest].map(([digest, category]) => ({ category, digest })) };
+}
+/** Owner capability detection: an old owner without the marker keeps its
+ * original retention policy and receives no hints. */
+function ownerSupportsRetentionHints(runtime) {
+  try { return runtime.describe?.()?.retentionHints?.supported === true; }
+  catch { return false; }
+}
+
 /** Native compaction on an already-bound lease; raw coded failures propagate. */
-async function compactOnLease(adapter, lease, { model, messages, system, tools, signal }) {
+async function compactOnLease(adapter, lease, { model, messages, system, tools, signal, retention }) {
   assertTextHistory(messages); signal?.throwIfAborted();
   const runtime = adapter.runtime();
   const history = prepareHistory(runtime, sanitizeCompactHistory(messages), lease.binding);
-  const provider = lease.operation.provider({ mode: 'compact', replay: history.replay });
+  // Experimental source-aware retention: only when the preset enables it AND
+  // the owner advertises the capability. The full request is still sent.
+  const retentionHints = retention === true && ownerSupportsRetentionHints(runtime)
+    ? buildRetentionHints(history.messages) : undefined;
+  const provider = lease.operation.provider({ mode: 'compact', replay: history.replay,
+    ...(retentionHints === undefined ? {} : { retentionHints }) });
   const assembler = new BlockAssembler();
   const request = { provider: NATIVE_PROVIDER, model, messages: history.messages,
     ...(system === undefined ? {} : { system }), ...(tools === undefined ? {} : { tools }), signal };

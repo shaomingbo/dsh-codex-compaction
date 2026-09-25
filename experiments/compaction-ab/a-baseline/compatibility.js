@@ -7,7 +7,7 @@ export { Service } from '@deepseek-ai/cordis';
 export { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic';
 export { isCompactCheckpointSource } from '@deepseek-ai/dsh-compaction';
 export { LlmAdapter, LlmError, BlockAssembler, attributionHeaders, resolveRetryPolicy } from '@deepseek-ai/dsh-llm';
-export { PiAiAdapter, Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai';
+export { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai';
 export { credentialKey } from '@deepseek-ai/dsh-credentials';
 export { AuthorizationDeclinedError } from '@deepseek-ai/dsh-authorization';
 

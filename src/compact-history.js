@@ -44,6 +44,39 @@ export function remapLegacyCompactMessage(message) {
   return source === message?.source ? message : { ...message, source };
 }
 
+/** Legacy settlement notices are the one user-source family the old host
+ * producer could fill with structural assistant payload blocks. */
+function isLegacySettlementNotice(message) {
+  return message?.role === 'user' && message?.source?.kind === 'subagent-settled';
+}
+
+/**
+ * Normalize legacy `user/subagent-settled` notices to the CURRENT producer's
+ * text-only semantics, in the request copy only: keep text blocks, drop the
+ * structural tool-call/reasoning payload the current constructor never emits.
+ * The durable session is never rewritten, and validation is not simply
+ * skipped — the structural blocks are removed before the pairing check or the
+ * converter sees them. A block this normalization cannot preserve fail-closes
+ * instead of being dropped silently.
+ */
+export function normalizeLegacySettlementNotices(messages) {
+  let changed = false;
+  const normalized = messages.map(message => {
+    if (!isLegacySettlementNotice(message)) return message;
+    const content = message.content ?? [];
+    if (content.every(block => block?.type === 'text' && typeof block.text === 'string')) return message;
+    const kept = [];
+    for (const block of content) {
+      if (block?.type === 'text' && typeof block.text === 'string' && block.text.length > 0) { kept.push(block); continue; }
+      if (block?.type === 'tool-call' || block?.type === 'reasoning') continue;
+      throw unsafe('A legacy subagent settlement notice carries a block its text-only normalization cannot preserve.');
+    }
+    changed = true;
+    return { ...message, content: kept };
+  });
+  return changed ? normalized : messages;
+}
+
 /**
  * Replay must be a supported, source-aligned pi-ai v2 envelope before any
  * error/aborted sanitization. Invalid metadata stays fail-closed instead of
@@ -88,13 +121,16 @@ export function assistantStopReason(message) {
   return typeof reason === 'string' ? reason : undefined;
 }
 
-/** Call/result ids must match 1:1 in order, with no interrupting user/assistant text. */
+/** Call/result ids must match 1:1 in order, with no interrupting user/assistant text.
+ * Only ASSISTANT top-level tool-call blocks are real calls, and only the tool
+ * role carries results; tool-call blocks inside any other role are payload
+ * (e.g. a legacy notice already normalized to text) and never pair. */
 export function assertToolPairingOrder(messages) {
   const unmatched = [];
   const seenCalls = new Set();
   const seenResults = new Set();
   for (const message of messages) {
-    const calls = toolIds(message, 'tool-call', 'id');
+    const calls = message?.role === 'assistant' ? toolIds(message, 'tool-call', 'id') : [];
     const results = message?.role === 'tool' && typeof message.toolCallId === 'string' ? [message.toolCallId] : [];
     if (calls.length && results.length) throw unsafe('A message cannot mix tool calls and tool results.');
     if (results.length) {
@@ -116,7 +152,9 @@ export function assertToolPairingOrder(messages) {
       }
       continue;
     }
-    if (unmatched.length) throw unsafe('A user or assistant message interrupted an unmatched tool call.');
+    if (unmatched.length && (message?.role === 'user' || message?.role === 'assistant')) {
+      throw unsafe('A user or assistant message interrupted an unmatched tool call.');
+    }
   }
   if (unmatched.length) throw unsafe('Tool calls are not paired with a result; refusing to invent a successful tool outcome.');
 }
@@ -129,10 +167,22 @@ export function assertToolPairingOrder(messages) {
  */
 export function sanitizeCompactHistory(messages) {
   if (!Array.isArray(messages)) throw unsafe('Compact history must be a message list.');
-  if (messages.some(message => (message.content ?? []).some(block => block.type === 'tool-result'))) {
+  // V3 tool-result wrappers are legacy content blocks in non-tool messages.
+  // V4 tool-role messages legitimately carry tool-result blocks as nested
+  // payload data inside their content; those are not V3 wrappers.
+  if (messages.some(message => message?.role !== 'tool' && (message.content ?? []).some(block => block.type === 'tool-result'))) {
     throw unsafe('V3 tool-result wrappers require official migration before compacting V4 history.');
   }
-  messages = messages.map(remapLegacyCompactMessage);
+  messages = normalizeLegacySettlementNotices(messages.map(remapLegacyCompactMessage));
+  // After the one sanctioned normalization, structural tool-call blocks on any
+  // non-assistant message are an unknown structure: fail closed rather than
+  // passing them to the converter as payload or guessing a pairing.
+  for (const message of messages) {
+    if (message?.role === 'assistant' || message?.role === 'tool') continue;
+    if ((message.content ?? []).some(block => block?.type === 'tool-call')) {
+      throw unsafe('A non-assistant message carries structural tool-call blocks; only legacy subagent-settled notices are normalized.');
+    }
+  }
   const completed = new Set();
   for (const message of messages) {
     if (message?.role === 'tool' && typeof message.toolCallId === 'string') completed.add(message.toolCallId);

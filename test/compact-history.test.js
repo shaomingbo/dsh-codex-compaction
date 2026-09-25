@@ -70,7 +70,11 @@ test('nested tool-result content is payload and does not create extra pairing id
       isError: false,
     }),
   ];
-  assert.throws(() => sanitizeCompactHistory(history), { code: 'CODEX_NATIVE_UNSAFE_HISTORY' });
+  // Nested tool-results inside tool-role messages are V4 payload data,
+  // not V3 wrappers; they pass through without extra pairing.
+  const sanitized = sanitizeCompactHistory(history);
+  assert.equal(sanitized.length, 2);
+  assert.ok(sanitized[1].content.some(block => block.type === 'tool-result'), 'nested tool-result preserved as payload');
 });
 
 test('failed assistant keeps completed text and paired tools, dropping only unpaired calls', () => {
@@ -196,4 +200,68 @@ test('invalid replay fails closed on the compact seam without a native request',
     content: [{ type: 'text', text: `${BASIC_INSTRUCTION_FIRST_LINE}\n\n(remaining pinned instruction body)` }] });
   await assert.rejects(f.summarize([createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'BIZ-USER-SEAM' }] }), broken]), error => error.code === 'CODEX_NATIVE_REPLAY_INCOMPATIBLE');
   assert.equal(fake.calls.length, 0);
+});
+
+test('legacy subagent-settled notices normalize to text-only in the request copy only', () => {
+  const legacyNotice = createUserMessage({
+    role: 'user',
+    source: { kind: 'subagent-settled', form: 'notice', summary: 'Subagent finished', senderSessionId: 'child-1' },
+    content: [
+      { type: 'text', text: 'Subagent finished.' },
+      { type: 'text', text: 'Its closing message:' },
+      { type: 'text', text: 'BIZ-LEGACY-CLOSING' },
+      { type: 'tool-call', id: 'legacy-call', name: 'read_file', arguments: '{}' },
+      { type: 'reasoning', text: 'legacy reasoning payload' },
+    ],
+  });
+  const parentCall = assistant({ text: 'BIZ-PARENT-CALL', tools: [{ id: 'real-call' }] });
+  const toolResult = createToolResultMessage({ callId: 'real-call', content: [{ type: 'text', text: 'ok' }] });
+  const original = [legacyNotice, parentCall, toolResult];
+  const sanitized = sanitizeCompactHistory(original);
+  // The request copy keeps the text and drops the structural payload the
+  // current producer never emits; the original array is untouched.
+  assert.equal(sanitized.length, 3);
+  assert.deepEqual(sanitized[0].content.map(block => [block.type, block.text]).filter(([type]) => type === 'text').length, 3);
+  assert.equal(sanitized[0].content.some(block => block.type === 'tool-call' || block.type === 'reasoning'), false);
+  assert.equal(sanitized[0].source.kind, 'subagent-settled');
+  assert.equal(original[0].content.length, 5, 'the durable notice itself is never rewritten');
+  // The real parent pairing still validates around the normalized notice.
+  assert.equal(sanitized[1].content.some(block => block.type === 'tool-call'), true);
+});
+
+test('a legacy notice block the text-only normalization cannot preserve fails closed', () => {
+  const bad = createUserMessage({
+    role: 'user',
+    source: { kind: 'subagent-settled' },
+    content: [{ type: 'text', text: 'x' }, { type: 'image', data: 'legacy' }],
+  });
+  assert.throws(() => sanitizeCompactHistory([bad]), error => error.code === 'CODEX_NATIVE_UNSAFE_HISTORY');
+});
+
+test('structural tool-call blocks on other-source user messages stay fail-closed', () => {
+  const foreign = createUserMessage({
+    role: 'user',
+    source: { kind: 'user' },
+    content: [{ type: 'text', text: 'looks like a notice' }, { type: 'tool-call', id: 'x', name: 'y', arguments: '{}' }],
+  });
+  assert.throws(() => sanitizeCompactHistory([foreign]), /only legacy subagent-settled notices are normalized/);
+});
+
+test('only assistant top-level tool-calls pair; user payload blocks never trigger interrupt rules', () => {
+  // A notice already text-only no longer trips the historical
+  // "interrupted unmatched tool calls" misfire between two valid pairs.
+  const notice = createUserMessage({
+    role: 'user',
+    source: { kind: 'subagent-settled', form: 'notice', summary: 's', senderSessionId: 'c' },
+    content: [{ type: 'text', text: 'settled' }],
+  });
+  const first = assistant({ text: 'a', tools: [{ id: 'c1' }] });
+  const firstResult = createToolResultMessage({ callId: 'c1', content: [{ type: 'text', text: 'r1' }] });
+  const second = assistant({ text: 'b', tools: [{ id: 'c2' }] });
+  const secondResult = createToolResultMessage({ callId: 'c2', content: [{ type: 'text', text: 'r2' }] });
+  const sanitized = sanitizeCompactHistory([first, firstResult, notice, second, secondResult]);
+  assert.equal(sanitized.length, 5);
+  // Real unpaired assistant calls are still refused.
+  assert.throws(() => sanitizeCompactHistory([first, firstResult, notice, second]),
+    /Tool calls are not paired with a result/);
 });

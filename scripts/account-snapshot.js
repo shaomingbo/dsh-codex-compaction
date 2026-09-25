@@ -14,7 +14,7 @@ export async function prepareAccountSnapshot(source) {
   const manifest = JSON.parse(manifestText);
   if (manifest.name !== 'dsh-token-usage' || manifest.dependencies?.['@earendil-works/pi-ai'] !== '0.82.1' || manifest.dependencies?.['pi-ai-codex-native'] !== 'npm:@earendil-works/pi-ai@0.84.4') throw new Error('Account snapshot requires the explicitly pinned owner and native SDK manifest.');
   const root = await mkdtemp(join(tmpdir(), 'dsh-codex-account-snapshot-'));
-  const allowed = ['lib', 'test', 'bin', 'docs', 'bench', 'package.json', 'pnpm-lock.yaml', 'cordis.patch.yml', 'README.md', 'README.zh.md', 'CONTEXT.md', 'SPEC.md', 'V2-PLAN.md', 'LICENSE'];
+  const allowed = ['lib', 'test', 'bin', 'docs', 'bench', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.git', 'cordis.patch.yml', 'README.md', 'README.zh.md', 'CONTEXT.md', 'SPEC.md', 'V2-PLAN.md', 'LICENSE'];
   for (const name of allowed) {
     const from = join(source, name);
     try { await lstat(from); } catch (e) { if (e.code === 'ENOENT' && name !== 'package.json' && name !== 'lib' && name !== 'test') continue; throw e; }
@@ -24,8 +24,10 @@ export async function prepareAccountSnapshot(source) {
       return true;
     } });
   }
-  const env = { ...process.env, DSH_HOME: join(root, 'runtime-home'), npm_config_ignore_scripts: 'true' };
-  const install = spawnSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], { cwd: root, env, encoding: 'utf8', timeout: 300000 });
+  const env = { ...process.env, DSH_HOME: join(root, 'runtime-home'), npm_config_ignore_scripts: 'true',
+    // Isolated content store inside the snapshot; never the machine-global one.
+    npm_config_store_dir: join(root, 'pnpm-store') };
+  const install = spawnSync('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', '--store-dir', join(root, 'pnpm-store')], { cwd: root, env, encoding: 'utf8', timeout: 300000 });
   await writeFile(join(root, 'snapshot-install.log'), `${install.stdout ?? ''}\n${install.stderr ?? ''}`, { mode: 0o600 });
   if (install.status !== 0) throw new Error(`Isolated account dependencies failed (${install.status ?? install.error?.code}); inspect ${root}/snapshot-install.log. Live profile was not used.`);
   const authSdk = JSON.parse(await readFile(join(root, 'node_modules/@earendil-works/pi-ai/package.json'), 'utf8')).version;

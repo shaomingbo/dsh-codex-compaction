@@ -40,20 +40,15 @@ test('human /compact executes official lifecycle through native converter, then 
   for (let round = 0; round < 3; round++) {
     const s = agent.session;
     s.append('request/header', { header: { config: agent.options }, reason: round ? 'resume' : 'initial' });
-    // No header.system and no system/message event: 0.1.7 forbids header.system,
-    // and the baseline fixture does not exercise the system leg.
-    // 0.1.7 Basic owns selection and protects the recent tail, so the fixture
-    // seeds two completed turns: a large historical turn to shadow and a small
-    // live tail that must survive summarization.
-    const firstTurn = s.seq;
-    for (const turn of [firstTurn, firstTurn + 1]) {
-      s.append('turn/start', { turn });
-      s.append('user/message', user(turn === firstTurn ? 'Retain the exact fixture requirement.' : 'Continue from the retained state.'), { surfaceOp: 'append' });
-      s.append('step/start', { turn, step: 1 });
-      s.append('assistant/message', { turn, step: 1, stream: [], message: assistant(turn === firstTurn ? 'Historical analysis. '.repeat(2000) : 'Retained tail requirement.') }, { surfaceOp: 'append' });
-      s.append('step/end', { turn, step: 1 });
-      s.append('turn/end', { turn, reason: { kind: 'completed' } });
+    const turn = s.seq;
+    s.append('turn/start', { turn });
+    s.append('user/message', user('Retain the exact fixture requirement.'), { surfaceOp: 'append' });
+    for (let step = 0; step < 2; step++) {
+      s.append('step/start', { turn, step });
+      s.append('assistant/message', { turn, step, stream: [], message: assistant(step === 0 ? 'Historical analysis. '.repeat(2000) : 'Latest unchanged tail.') }, { surfaceOp: 'append' });
+      s.append('step/end', { turn, step });
     }
+    s.append('turn/end', { turn, reason: { kind: 'completed' } });
     const result = await ctx.commands.execute(agent, '/compact', [], signal);
     assert.equal(result.result.kind, 'success', JSON.stringify(result));
     assert.equal(requests[round].input.at(-1).type, 'compaction_trigger');

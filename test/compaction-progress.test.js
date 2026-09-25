@@ -25,8 +25,9 @@ function fixture(options = {}) {
     events.push(event);
     if (type === 'user/message' || type === 'assistant/message') {
       if (extra.surfaceOp?.op === 'replace') {
-        const first = session.surface.nodes.indexOf(extra.surfaceOp.start);
-        const last = session.surface.nodes.indexOf(extra.surfaceOp.end);
+        // Real 0.1.7 replacement events carry startSeq/endSeq.
+        const first = session.surface.nodes.indexOf(extra.surfaceOp.startSeq);
+        const last = session.surface.nodes.indexOf(extra.surfaceOp.endSeq);
         assert.ok(first >= 0 && last >= first);
         session.surface.nodes.splice(first, last - first + 1, event.seq);
       } else session.surface.nodes.push(event.seq);
@@ -42,7 +43,7 @@ function fixture(options = {}) {
     shadowedTokenCount: 999999, ...overrides });
   const replace = (summaryEvent, price = 30, extra = {}) => emit('user/message', { role: 'user', price,
     content: [{ type: 'text', text: '<framing>ciphertext-payload</framing>' }], source: { privateIdentity: 'do-not-retain' } },
-  { surfaceOp: { op: 'replace', start: summaryEvent.data.shadowedRange.start, end: summaryEvent.data.shadowedRange.end },
+  { surfaceOp: { op: 'replace', startSeq: summaryEvent.data.shadowedRange.start, endSeq: summaryEvent.data.shadowedRange.end },
     sourceEventSeqs: [summaryEvent.seq], ...extra });
   const end = (id = 'a', extra = {}) => emit('compaction/end', { compactionId: id, ...extra });
   const latest = () => progress.status(session).latest;
@@ -63,6 +64,7 @@ test('commits only the observed summary, actual framed replacement, and matching
     compactionId: 'a', outcome: 'committed', beforePressure: { tokens: 130, baseline: 'estimated' },
     afterPressure: { tokens: 40, baseline: 'estimated' }, shadowedTokens: 120,
     framedReplacementTokens: 30, netFreedTokens: 90, durationMs: 25, stepInterval: null,
+    endedAtMs: 125, afterSurfaceTokens: 30,
     comparison: { basis: 'fixed-heuristic-message-delta', reason: null },
   });
   assert.match(seen.content[0].text, /framing/);
@@ -210,7 +212,7 @@ test('status is detached, contains no content, errors, headers, usage or history
 test('new instance does not replay history or invent before pressure', () => {
   const f = fixture(); f.start(); f.replace(f.summary()); f.end();
   const fresh = new CompactionProgress();
-  assert.deepEqual(fresh.status(f.session), { observed: false, counts: { started: 0, committed: 0, failed: 0, unknown: 0 }, latest: null });
+  assert.deepEqual(fresh.status(f.session), { observed: false, counts: { started: 0, committed: 0, failed: 0, unknown: 0 }, latest: null, lastCommitted: null });
   const end = f.end(); fresh.observe(f.session, end);
   assert.equal(fresh.status(f.session).latest, null);
 });

@@ -2,13 +2,13 @@
 
 [中文](README.zh.md)
 
-## Unreleased 0.1.7-alpha.1 migration candidate
+## 0.1.7-alpha.1 migration candidate
 
-This worktree targets **only DSH 0.1.7-alpha.1**. It has not been installed, published or GUI-accepted; the existing package/tag version remains historical, not a distribution of these changes. Sections below describe the old release and do not extend this candidate's support matrix.
+This package targets **only DSH 0.1.7-alpha.1**, and the installer accepts exactly that `dsh` CLI version (see the install section). Real-account calls, production deployment and historical migration are separate and are not claimed here.
 
 Select the declarative `codex-native-b` preset (standard plugins with a summarize-only `BasicCompactionEngine` subclass). `/codex-native on`, `reader-text`, or `off` is per-session; default is off. `nativeCompaction` enables capability, not preference. Basic alone selects, prunes, meters and persists. Owner-direct summaries never claim `llmStreamCall:true`; native usage comes only from observed receipts. Middleware is replay-only. Setup no longer copies or rewrites presets. Recovery uses public asynchronous `sessionQuery.readSession` command events. No automatic update of existing session preset snapshots is claimed.
 
-Synthetic tests retain the pi-ai 0.84.4 owner double against the target adapter. Live owner/pi-ai 0.85.1 replay, GUI, installation and production migration remain unverified. See `THIRD_PARTY_NOTICES.md` for copied standard declaration/instruction licensing.
+Synthetic tests retain the pi-ai 0.84.4 owner double against the target adapter. Live owner/pi-ai 0.85.1 replay, real-account calls, production installation and production migration remain unverified. See `THIRD_PARTY_NOTICES.md` for copied standard declaration/instruction licensing.
 
 **0.4.2:** Session V3 current-surface system prompt for structured compaction, plus the
 `0.4.1` long-session native compact stability line. Does not claim `0.1.5-*`.
@@ -33,29 +33,29 @@ tags and their validation evidence are retained.
 ## Install (after the tag exists)
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.5.0
 ```
 
 No arguments means `install`; default profile is `web`. Other commands:
 
 ```bash
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 status
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 uninstall
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 install --profile <name> --source link:<local-path>
-npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.4.6 --help
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.5.0 status
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.5.0 uninstall
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.5.0 install --profile <name> --source link:<local-path>
+npx --yes --ignore-scripts github:shaomingbo/dsh-codex-compaction#v0.5.0 --help
 ```
 
-- The installer requires the exact `dsh` CLI **`0.1.2-alpha.3`, `0.1.2-rc.1`, `0.1.5-rc.1`, or `0.1.5-rc.2`** on PATH and delegates
+- The installer requires the exact `dsh` CLI **`0.1.7-alpha.1`** on PATH and delegates
   every mutation to the public `dsh plugin` CLI with `--ignore-scripts` (pnpm 11 remove
   uses `--config.ignore-scripts=true`, not its unsupported shorthand). It verifies
-  manifest postconditions and reports failures honestly; rc.1 does not promise rollback.
+  manifest postconditions and reports failures honestly; the installer does not promise rollback.
   Only top-level launcher help is probed: plugin help would initialize a profile.
 - **If `dsh` is missing, a different version, or the plugin command fails, the installer
   fails closed with guidance.** There is no direct-manifest fallback. Check
-  `dsh --version`. This exact launcher matrix does not widen the plugin's pinned
-  **0.1.2-rc.1 host packages**, nor identify the version of an already running GUI.
-- Proposed companion for corrected SDK-stream diagnostics: **`dsh-token-usage` `5.1.5`**
-  (`github:shaomingbo/dsh-token-usage#v5.1.5`, only after publication and acceptance).
+  `dsh --version`. This exact launcher version does not widen the plugin's pinned
+  **0.1.7-alpha.1 host packages**, nor identify the version of an already running GUI.
+- Proposed companion for corrected SDK-stream diagnostics: **`dsh-token-usage` `5.3.0`**
+  (`github:shaomingbo/dsh-token-usage#v5.3.0`, only after publication and acceptance).
   Older compatible owners still execute, but their stale/missing diagnostics are not fixed by this consumer. It is a capability companion,
   not a registry dependency: this package never guesses account versions and instead
   preflights the `codex-runtime/v1` protocol and auth owner at runtime. Adjacent/older
@@ -172,7 +172,7 @@ cancel it. This display issue is retained as a limitation, not a release blocker
 
 ## Development
 
-Node >= 24, pinned public DSH `0.1.2-rc.1`. No install lifecycle scripts.
+Node >= 24, pinned public DSH `0.1.7-alpha.1`. No install lifecycle scripts.
 
 ```bash
 pnpm install --frozen-lockfile --ignore-scripts

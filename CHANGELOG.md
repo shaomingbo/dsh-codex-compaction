@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.5.0 — 0.1.7-alpha.1 durable native compaction (isolated verification complete)
+
+- **Owner Settings catalog projection**: `models.preview` / `models.apply` expose the
+  versioned Codex catalog to Accounts & Usage, binding a catalog revision, Settings
+  revision and preview digest; apply is idempotent, revision-guarded and rejects
+  malformed/duplicate/unknown targets instead of writing a half list. Sol and Luna
+  are filled from verified Codex facts (`contextWindow=272000`, `maxTokens=128000`,
+  text+image; `off→none`, `minimal→low`).
+- **Codex Native preset default**: preset-local `nativeDefault` (true only on
+  `codex-native-b`), explicit per-session `on/off/reader-text` wins, `inherit` and
+  never-set follow the CURRENT preset, and status reports capability, preset default,
+  session preference, effective mode and carrier readability separately. The global
+  native capability flag stays a separate gate and never carries preference.
+- **Deterministic failures**: the pure-local history/schema precheck now runs before
+  any lease, and deterministic bad inputs are fingerprint-blocked (session, route,
+  config/algorithm version, normalized input digest, fixed error class) instead of
+  riding the transient cooldown. Process-local state; a restart re-runs the precheck.
+- **Preset-scoped efficiency guard** (default off, experimental): defers an automatic
+  low-gain native request (`<4096` heuristic tokens freed or `<10%` of the replaced
+  content, within 60 s and without ≥4096 surface growth) with zero HTTP and a fixed
+  reason; manual compaction bypasses the efficiency deferral but not the safety
+  checks. No fabricated commit, no hidden retry, no automatic reader-text.
+- **Source-aware retention** (`source-aware-v1`, ships behind the preset's
+  experimental `sourceRetention` switch, default off): the full request is still
+  sent; only provably duplicated host-generated copies may leave the retained
+  checkpoint copy. Ambiguous same-text sources fall back conservatively, real user
+  content/constraints/unknown items are never dropped, and an old owner without the
+  capability marker receives no hints.
+- **Observer and history correctness**: replacement ranges are read from the 0.1.7
+  `surfaceOp`/`sourceEventSeqs` schema, committed requires a source-linked summary →
+  replacement → clean end, comparison-unknown is distinct from failure, and V4
+  tool-role history (top-level tool payloads, durable images) is accepted while
+  legacy V3 wrappers still fail closed.
+- **Installer/packaging**: host `peerDependencies` removed again (they make
+  `npx github:…#tag` auto-resolve the whole host tree and hit ERESOLVE); the
+  compatibility contract stays gated by the installer's dsh CLI matrix
+  (`0.1.7-alpha.1`). Bilingual README install commands pinned to `v0.5.0`.
+- **Test scope**: the Structured B compaction A/B experiment is repaired under
+  0.1.7 and re-included in `npm run check` (reversing the 0.4.5 scope reduction
+  now that the suite passes), alongside a same-corpus old/new efficiency benchmark.
+- Verified only in isolation: packaged candidates, isolated 0.1.7 host, and the
+  paired account snapshot. Real-account/GUI/production claims stay separate.
+
 ## 0.4.6 — installer: drop npm host peers; version-derived default source
 
 - Host packages (@deepseek-ai/cordis, dsh-*) are provided by the DSH profile

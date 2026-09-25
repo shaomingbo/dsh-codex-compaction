@@ -9,6 +9,8 @@
       name: '@deepseek-ai/dsh-agent-preset'
       config:
         id: codex-native-b
+        name: Codex Native
+        description: 原生压缩默认开启；适合长任务；由 Accounts & Usage 提供账号能力。
         order: 9
         plugins:
           - id: persona
@@ -69,9 +71,24 @@
             isolate:
               compaction: true
               toolResultPruner: true
+              codexNativePolicy: true
             config:
+              # The native-default policy publishes a preset service, so it
+              # lives INSIDE the compaction isolate realm (the real registry
+              # rejects root-leaking preset services). Mounts before the
+              # engine that resolves it.
+              - id: codex-native-policy
+                name: dsh-codex-compaction/native-policy
+                config:
+                  nativeDefault: true
               - id: compaction-basic
                 name: 'dsh-codex-compaction/compaction'
+                # Pin Basic's public per-pressure commit budget: one commit
+                # attempt per pressure loop on this preset (fewer back-to-back
+                # compactions in the same pressure cycle). Standard presets
+                # keep their own declaration unchanged.
+                config:
+                  compactionRetries: 1
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
               - id: tool-result-pruner

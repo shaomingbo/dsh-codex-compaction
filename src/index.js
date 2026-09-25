@@ -116,8 +116,8 @@ export function apply(ctx, config = {}) {
         return { kind: 'error', text: 'Reader-text requires an applicable standard openai-codex route and its Accounts native reader; no preference changed.' };
       }
       if (argument && argument !== 'status') ctx.codexBridge.setNativePreference(session.id, argument);
-      const status = await ctx.codexBridge.nativePreferenceStatus(session.id);
-      const preference = `Profile default: ${status.profile ? 'on' : 'off'}. Session: ${status.session}. Effective: ${status.effective ? 'ON' : 'OFF'}.`;
+      const status = await ctx.codexBridge.nativePreferenceStatus(invocation.agent, session.id);
+      const preference = `Capability: ${status.capability ? 'enabled' : 'DISABLED'}. Preset default: ${status.preset ? 'native ON' : 'Basic (text)'}. Session: ${status.session}. Effective: ${status.effective ? 'ON' : 'OFF'}.`;
       const readiness = target.model
         ? (applicability.applicable
           ? `Native applicability for ${target.provider ?? 'openai-codex'}/${target.model}: ready${applicability.model?.contextWindow ? ` (resolved context ${applicability.model.contextWindow})` : ''}.`
@@ -126,7 +126,7 @@ export function apply(ctx, config = {}) {
       const history = `Last summarization attempt: ${attemptText(status.lastAttempt)}.`;
       const mode = `Summarization mode: ${status.summarizationMode}. Reader-text replays native state through the same owner into a text summary; it applies to the next official compaction, not ordinary generation. Use /compact while idle to request it now; /codex-native on returns to native output. No automatic strategy switch is enabled.`;
       return { kind: 'success', text: [`Native Codex compaction preference.`, preference, mode, readiness, history, recoveryText(status), diagnosticText(status),
-        'Native summaries require this session to use the declarative codex-native-b preset; unchanged standard presets still summarize as text. Capability enablement does not opt in sessions. OFF stops new native creation; existing native state remains readable.'].join('\n') };
+        'Explicit session preference (on/off/reader-text) wins; inherit and never-set follow the current preset default — native ON on the declarative codex-native-b preset, Basic on standard presets. OFF stops new native creation; existing native state remains readable.'].join('\n') };
     },
   }));
   ctx.effect(() => ctx.commands.register({
@@ -144,17 +144,22 @@ export function apply(ctx, config = {}) {
       }
       if (engine?.config && typeof engine.compactIfNeeded === 'function') {
         const target = session?.requestHeader()?.config ?? invocation.agent?.options ?? {};
-        const status = session ? await ctx.codexBridge.nativePreferenceStatus(session.id) : null;
+        const status = session ? await ctx.codexBridge.nativePreferenceStatus(invocation.agent, session.id) : null;
         const applicability = target.model ? await ctx.codexBridge.nativeApplicability(target.model, invocation.signal) : { applicable: false, reason: 'NO_MODEL' };
+        const carriers = session ? await ctx.codexBridge.carrierReadability(session, invocation.agent, invocation.signal) : null;
         const auto = `Basic automatic compaction: ${engine.config.auto === false ? 'off' : 'on'} (official backend; triggers, retention, meter and shrink checks stay official).`;
         const native = status
-          ? [`Native preference: effective ${status.effective ? 'ON' : 'OFF'} (session ${status.session}, profile ${status.profile ? 'on' : 'off'}).`,
+          ? [`Native preference: effective ${status.effective ? 'ON' : 'OFF'} (session ${status.session}, preset default ${status.preset ? 'native ON' : 'Basic'}, capability ${status.capability ? 'enabled' : 'disabled'}).`,
             target.model ? (applicability.applicable
               ? `Native readiness for ${target.provider ?? 'openai-codex'}/${target.model}: ready.`
               : `Native readiness for ${target.provider ?? '?'}/${target.model ?? '?'}: NOT available (${applicability.reason}); opted-in compaction fails closed.`)
               : 'Native readiness: unknown until a model is routed.',
             `Summarization mode: ${status.summarizationMode}.`,
-            `Last attempt: ${attemptText(status.lastAttempt)}.`].join('\n')
+            `Last attempt: ${attemptText(status.lastAttempt)}.`,
+            carriers === null ? 'Native carriers: no live session to inspect.'
+              : carriers.kind === 'absent' ? 'Native carriers: none in current history.'
+              : carriers.kind === 'unavailable' ? 'Native carriers: presence unknown (history inspection unavailable).'
+              : `Native carriers: ${carriers.carriers} in current history; reader ${carriers.readable ? 'can replay them' : `NOT available (${carriers.reason})`}. OFF never blocks replay of existing carriers.`].join('\n')
           : 'Native preference: no live session.';
         const committed = session ? `Observed compaction result: ${committedText(session)}.` : 'Observed compaction result: no live session.';
         const benefit = progressText(ctx.codexBridge.compactionProgress(session));

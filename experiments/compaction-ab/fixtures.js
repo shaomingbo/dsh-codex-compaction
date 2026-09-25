@@ -9,6 +9,7 @@ import { encodeCheckpoint, decodeCheckpoint } from './a-baseline/checkpoint.js';
 import { tokenIdentity } from './a-baseline/auth.js';
 import { ROUTE } from './a-baseline/constants.js';
 import { StructuredCompactionEngine, readStructuredCheckpoint, measureEffective } from './b-backend.js';
+import { isCompactCheckpointSource } from './b-host.js';
 
 export const MODEL = 'gpt-5.4';
 export const VARIANTS = ['A-basic', 'B-matched-price', 'B-native-estimate'];
@@ -23,7 +24,7 @@ const bodyText = (family, size) => (family === 'cjk' ? '保留准确路径和任
 
 export function appendWork(session, { family = 'ascii', bulkChars = 16000, label = 'round' } = {}) {
   const turn = session.seq;
-  session.append('request/header', { header: { config: { provider: ROUTE, model: MODEL }, system: 'Preserve exact fixture requirements; no real side effects.',
+  session.append('request/header', { header: { config: { provider: ROUTE, model: MODEL },
     ...(family === 'tool' ? { tools: [{ name: 'read_file', description: 'Read a synthetic fixture', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } }] } : {}) }, reason: session.requestHeader() ? 'change' : 'initial' });
   session.append('turn/start', { turn });
   session.append('user/message', user('Do not restart DSH. Preserve /fixture/source.ts and pending validation.', `${label}-user`), { surfaceOp: 'append' });
@@ -31,17 +32,17 @@ export function appendWork(session, { family = 'ascii', bulkChars = 16000, label
   let toolCallSeq;
   if (family === 'tool') {
     const callId = `${label}-call`;
-    const event = session.append('assistant/message', { turn, step: 1, message: assistant([{ type: 'tool-call', id: callId, name: 'read_file', arguments: '{"path":"/fixture/source.ts"}' }], `${label}-assistant`) }, { surfaceOp: 'append' });
+    const event = session.append('assistant/message', { turn, step: 1, stream: [], message: assistant([{ type: 'tool-call', id: callId, name: 'read_file', arguments: '{"path":"/fixture/source.ts"}' }], `${label}-assistant`) }, { surfaceOp: 'append' });
     toolCallSeq = event.seq;
     session.append('tool/call', { turn, step: 1, callId, name: 'read_file', arguments: '{"path":"/fixture/source.ts"}' });
     const message = fixed(createToolResultMessage({ callId, content: [{ type: 'text', text: bodyText(family, bulkChars) }], isError: false }), `${label}-tool`);
     session.append('tool/result', { turn, step: 1, message }, { surfaceOp: 'append' });
   } else {
-    session.append('assistant/message', { turn, step: 1, message: assistant([{ type: 'text', text: bodyText(family, bulkChars) }], `${label}-assistant`) }, { surfaceOp: 'append' });
+    session.append('assistant/message', { turn, step: 1, stream: [], message: assistant([{ type: 'text', text: bodyText(family, bulkChars) }], `${label}-assistant`) }, { surfaceOp: 'append' });
   }
   session.append('step/end', { turn, step: 1 });
   session.append('step/start', { turn, step: 2 });
-  session.append('assistant/message', { turn, step: 2, message: assistant([{ type: 'text', text: 'Latest tail: continue with validation.' }], `${label}-tail`) }, { surfaceOp: 'append' });
+  session.append('assistant/message', { turn, step: 2, stream: [], message: assistant([{ type: 'text', text: 'Latest tail: continue with validation.' }], `${label}-tail`) }, { surfaceOp: 'append' });
   session.append('step/end', { turn, step: 2 });
   session.append('turn/end', { turn, reason: { kind: 'completed' } });
   const nodes = [...session.surface.nodes];
@@ -113,7 +114,7 @@ export class ControlledProvider {
       const structured = readStructuredCheckpoint(message, expected(this.auth.identity));
       if (structured) return structured.items;
       const text = message.content.find(block => block.type === 'text' && block.text.startsWith(TEXT_PREFIX));
-      if (message.source.kind === 'plugin' && message.source.plugin === 'compact' && text) return decodeCheckpoint(text.text, expected(this.auth.identity)).items;
+      if (isCompactCheckpointSource(message.source) && text) return decodeCheckpoint(text.text, expected(this.auth.identity)).items;
       return [{ role: message.role, content: message.content, source: message.source.kind === 'model' ? { ...message.source, replayState: undefined } : message.source }];
     });
   }

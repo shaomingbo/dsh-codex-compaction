@@ -18,7 +18,7 @@ try {
   const account = spawnSync(process.execPath, ['--test'], { cwd: snapshot.root, env, encoding: 'utf8', timeout: 300000, maxBuffer: 16 * 1024 * 1024 });
   await writeFile(join(snapshot.root, 'account-tests.log'), `${account.stdout ?? ''}\n${account.stderr ?? ''}`, { mode: 0o600 });
   if (account.status !== 0) throw new Error(`Account suite failed (${account.status ?? account.error?.code}); inspect ${snapshot.root}/account-tests.log`);
-  const integration = spawnSync(process.execPath, ['--test', 'test/accounts.integration.js'], { cwd: root, env, encoding: 'utf8', timeout: env.CODEX_REALTIME_DEADLINE === '1' ? 240000 : 120000, maxBuffer: 4 * 1024 * 1024 });
+  const integration = spawnSync(process.execPath, ['--test', 'test/accounts.integration.js', 'test/durable-e2e.integration.js'], { cwd: root, env, encoding: 'utf8', timeout: env.CODEX_REALTIME_DEADLINE === '1' ? 240000 : 120000, maxBuffer: 4 * 1024 * 1024 });
   await writeFile(join(snapshot.root, 'integration-tests.log'), `${integration.stdout ?? ''}\n${integration.stderr ?? ''}`, { mode: 0o600 });
   if (integration.status !== 0) throw new Error(`Cross-plugin suite failed (${integration.status ?? integration.error?.code}); inspect ${snapshot.root}/integration-tests.log`);
   console.log(account.stdout.slice(-2200));

@@ -270,3 +270,4 @@ overrides:
   '@deepseek-ai/dsh-workflow-ptc': 0.1.7-alpha.1
   '@deepseek-ai/dsh-workspace': 0.1.7-alpha.1
   '@deepseek-ai/dsh-workspace-changes': 0.1.7-alpha.1
+storeDir: ../../../../development/ecdda2e3ac04608c6671b101ce270f46cc426a1908bc4e846e1aabefd4dc2c8a/cache/pnpm-store

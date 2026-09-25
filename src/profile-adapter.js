@@ -7,8 +7,7 @@ export const PACKAGE_NAME = 'dsh-codex-compaction';
 // Launcher versions are distinct from the plugin's pinned rc.1 host packages.
 // This is an exact tested matrix, not a SemVer range or a host-version inference.
 export const SUPPORTED_DSH_VERSIONS = Object.freeze(['0.1.7-alpha.1']);
-const PACKAGE_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
-export const DEFAULT_SOURCE = `github:shaomingbo/dsh-codex-compaction#v${PACKAGE_VERSION}`;
+export const DEFAULT_SOURCE = 'github:shaomingbo/dsh-codex-compaction#v0.5.0';
 const CLI_GUIDANCE = 'This migration candidate requires @deepseek-ai/dsh 0.1.7-alpha.1 and homogeneous 0.1.7-alpha.1 host packages. Installation/GUI acceptance is separate; no manifest fallback is available.';
 
 export function validateProfile(profile) {

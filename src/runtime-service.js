@@ -28,8 +28,29 @@ export class CodexRuntimeBridge extends Service {
   }
   validateCheckpoint(record, expected) { return this.runtime().validateCheckpoint(record, expected); }
   estimateCheckpoint(record) { return this.runtime().estimateCheckpoint(record); }
-  setNativePreference(sessionId, mode) { return this.nativeState.setSession(sessionId, mode); }
-  async nativePreferenceStatus(sessionId) { await this.nativeState.ready(sessionId); return this.nativeState.nativeStatus(sessionId); }
+  /** Preset default for one agent, resolved from that agent's mounted preset.
+   * Standard presets mount no codexNativePolicy row, so their default stays
+   * Basic; the root bridge never propagates the Native preset's default. */
+  presetNativeDefault(agent) {
+    try {
+      const presets = this.ctx.get('agentPresets');
+      const policy = typeof presets?.serviceFor === 'function' ? presets.serviceFor(agent, 'codexNativePolicy') : undefined;
+      return typeof policy?.presetNativeDefault === 'function' && policy.presetNativeDefault() === true;
+    } catch { return false; }
+  }
+  setNativePreference(sessionId, mode, options) { return this.nativeState.setSession(sessionId, mode, options); }
+  async nativePreferenceStatus(agent, sessionId) {
+    // Backward-compatible single-argument form: a bare session id resolves
+    // without a preset default (the constructor profile flag applies), which
+    // keeps existing callers and the command surface stable.
+    const legacy = sessionId === undefined && typeof agent === 'string';
+    const id = legacy ? agent : sessionId;
+    await this.nativeState.ready(id);
+    return this.nativeState.nativeStatus(id, {
+      ...(legacy ? {} : { presetNative: agent === undefined ? undefined : this.presetNativeDefault(agent) }),
+      capability: this.nativeCompaction !== false,
+    });
+  }
   /** Metadata-only; snapshot inspection never binds authentication or changes history. */
   compactionProgress(session) {
     const observed = this.progress.status(session);
@@ -51,6 +72,22 @@ export class CodexRuntimeBridge extends Service {
       return { ...observed, native: { kind: 'observed', carriers: carriers.length, clients,
         retainedUtf16Units, opaqueUtf16Units, basis: 'wire-text-utf16-length-not-provider-tokens' } };
     } catch { return { ...observed, native: { kind: 'unavailable' } }; }
+  }
+  /** Bounded carrier readability: presence plus the replay-gate verdict.
+   * OFF stops new native creation; existing carriers still report whether the
+   * owner reader could replay them. No history write, no authentication. */
+  async carrierReadability(session, agent, signal) {
+    let carriers;
+    try { carriers = session.deriveMessages().filter(isNativeCarrier).length; }
+    catch { return { kind: 'unavailable' }; }
+    if (!carriers) return { kind: 'absent', carriers: 0 };
+    const target = session.requestHeader()?.config ?? agent?.options ?? {};
+    const verdict = target.model
+      ? await this.nativeApplicability(target.model, signal)
+      : { applicable: false, reason: 'NO_MODEL' };
+    signal?.throwIfAborted();
+    return { kind: 'present', carriers, readable: verdict.applicable === true,
+      ...(verdict.applicable ? {} : { reason: verdict.reason }) };
   }
   /** Standard-route takeover verdict; never resolves authentication. */
   async nativeApplicability(model, signal) {

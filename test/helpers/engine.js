@@ -7,10 +7,16 @@ import * as provider from '../../src/provider-entry.js';
 import * as compaction from '../../src/compaction.js';
 import { fakeRuntime } from './fake-runtime.js';
 export const user = text => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] });
-export async function engineFixture(t, { runtimeOptions, withOwner = true, config = {}, capability = true } = {}) {
+export async function engineFixture(t, { runtimeOptions, withOwner = true, config = {}, capability = true, presetNative = false, guard, sourceRetention } = {}) {
   const ctx = new Context();
   for (const plugin of [Llm, Sessions, Projections, Meter]) await ctx.plugin(plugin);
   ctx.provide('sessionQuery', { readSession: async id => ({ events: ctx.sessions.get(id)?.snapshotEvents() ?? [] }) });
+  // The engine resolves the preset policy per agent through the official
+  // registry seam; this fixture stands in for that registry.
+  const nativePolicy = (presetNative || guard !== undefined || sourceRetention !== undefined)
+    ? Object.freeze({ ...(presetNative ? { presetNativeDefault: () => true } : {}), ...(guard === undefined ? {} : { efficiencyGuard: () => structuredClone(guard) }), ...(sourceRetention === undefined ? {} : { sourceRetention: () => sourceRetention === true }) })
+    : undefined;
+  ctx.provide('agentPresets', { serviceFor: (agent, name) => (name === 'codexNativePolicy' ? nativePolicy : name === 'compaction' ? ctx.compaction : undefined) });
   const hostCalls = [];
   class Host extends LlmAdapter {
     async *stream(options) {

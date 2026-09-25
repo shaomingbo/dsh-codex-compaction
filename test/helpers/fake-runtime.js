@@ -6,7 +6,7 @@ import { encodeCheckpoint, decodeCheckpoint } from '../../experiments/compaction
 import { ROUTE } from '../../src/constants.js';
 
 const usage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
-export function fakeRuntime({ identity = 'fixture-owner-connection', receipt = { kind: 'unavailable' }, configured = true, fail = false, failMode = 'always', customModels = [], applicable = true, applicabilityReason = 'ROUTE_ENDPOINT', rotateIdentityOnFailure } = {}) {
+export function fakeRuntime({ identity = 'fixture-owner-connection', receipt = { kind: 'unavailable' }, configured = true, fail = false, failMode = 'always', customModels = [], applicable = true, applicabilityReason = 'ROUTE_ENDPOINT', rotateIdentityOnFailure, retentionSupport = false } = {}) {
   const pinned = openaiCodexProvider().getModels();
   const template = { ...pinned[0] };
   // Custom models simulate the account's trusted-resolver materialization.
@@ -23,7 +23,8 @@ export function fakeRuntime({ identity = 'fixture-owner-connection', receipt = {
   };
   const runtime = {
     protocol: 'codex-runtime/v1',
-    describe: () => ({ protocol: 'codex-runtime/v1', route: ROUTE, authOwner: 'dsh-token-usage', configured }),
+    describe: () => ({ protocol: 'codex-runtime/v1', route: ROUTE, authOwner: 'dsh-token-usage', configured,
+      ...(retentionSupport ? { retentionHints: { supported: true, algorithm: 'source-aware-v1', version: 1 } } : {}) }),
     models: () => structuredClone(catalog),
     encodeCheckpoint,
     decodeCheckpoint(text, expected) {
@@ -51,13 +52,14 @@ export function fakeRuntime({ identity = 'fixture-owner-connection', receipt = {
         binding,
         close() { if (!done) closed++; done = true; },
         compactionUsage: () => structuredClone(compactDone && !done ? receipt : { kind: 'unavailable' }),
-        provider({ mode, replay }) {
+        provider({ mode, replay, retentionHints }) {
           replay.forEach(item => validateCheckpoint(item.checkpoint, binding));
+          if (retentionHints !== undefined && (retentionHints.version !== 1 || retentionHints.algorithm !== 'source-aware-v1' || !Array.isArray(retentionHints.items))) throw new Error('fixture: malformed retention hints');
           return {
             id: 'openai-codex', name: 'Fake owner', getModels: () => [structuredClone(selected)],
             auth: { apiKey: { name: 'Bound fixture', resolve: async () => ({ auth: {} }) } },
             streamSimple(_model, context, options) {
-              const callIndex = calls.push({ mode, identity: binding.identity, replay: structuredClone(replay), context: structuredClone(context), options: { apiKey: options.apiKey, headers: options.headers } });
+              const callIndex = calls.push({ mode, identity: binding.identity, replay: structuredClone(replay), ...(retentionHints === undefined ? {} : { retentionHints: structuredClone(retentionHints) }), context: structuredClone(context), options: { apiKey: options.apiKey, headers: options.headers } });
               const output = createAssistantMessageEventStream();
               const message = { role: 'assistant', content: [], api: selected.api, provider: 'openai-codex', model, usage: usage(), stopReason: 'stop', timestamp: 0 };
               queueMicrotask(() => {

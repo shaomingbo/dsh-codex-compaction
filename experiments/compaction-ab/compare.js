@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createFixture, ControlledProvider, appendWork, nativeEstimate, VARIANTS, expected, TEXT_PREFIX, hash, bytes, outcome, user } from './fixtures.js';
 import { readStructuredCheckpoint } from './b-backend.js';
+import { isCompactCheckpointSource } from './b-host.js';
 import { encodeCheckpoint, decodeCheckpoint } from './a-baseline/checkpoint.js';
 import { freezeMessage, createAssistantMessage } from './a-host.js';
 import { ROUTE } from './a-baseline/constants.js';
@@ -16,7 +17,7 @@ export async function calibrateA() {
   appendWork(f.agent.session, { bulkChars: 16000, label: 'calibration' });
   const result = await f.engine.compactNow(f.agent, new AbortController().signal);
   assert.ok(result);
-  const template = f.agent.session.deriveMessages().find(message => message.source.compactionId === result.compactionId);
+  const template = f.agent.session.deriveMessages().find(message => message.source?.compactionId === result.compactionId);
   assert.ok(template.content.some(block => block.type === 'text' && block.text.startsWith(TEXT_PREFIX)));
   const makeCarrier = checkpoint => freezeMessage({ ...template, content: template.content.map(block => block.type === 'text' && block.text.startsWith(TEXT_PREFIX) ? { ...block, text: encodeCheckpoint(checkpoint) } : block) });
   return { template, makeCarrier, price: checkpoint => f.ctx.tokenMeter.estimateMessage(makeCarrier(checkpoint)), dispose: f.dispose };
@@ -25,7 +26,7 @@ export async function calibrateA() {
 function checkpointOf(message, identity) {
   const b = readStructuredCheckpoint(message, expected(identity));
   if (b) return b;
-  if (message.source?.kind !== 'plugin' || message.source.plugin !== 'compact') return undefined;
+  if (!isCompactCheckpointSource(message.source)) return undefined;
   const text = message.content.find(block => block.type === 'text' && block.text.startsWith(TEXT_PREFIX));
   return text ? decodeCheckpoint(text.text, expected(identity)) : undefined;
 }
@@ -192,7 +193,7 @@ export async function failureTrial(variant, scenario, calibration) {
     if (scenario === 'invalid-usage-commit') provider.invalidUsage = true;
     if (scenario === 'abort-before') controller.abort();
     if (scenario === 'abort-during') provider.onFetch = () => controller.abort();
-    if (scenario === 'rewrite-selected') provider.onFetch = () => f.agent.session.append('user/message', user('New source must not be overwritten.', 'replacement-user'), { surfaceOp: { op: 'replace', start: range.start, end: range.start }, sourceEventSeqs: [range.start] });
+    if (scenario === 'rewrite-selected') provider.onFetch = () => f.agent.session.append('user/message', user('New source must not be overwritten.', 'replacement-user'), { surfaceOp: { op: 'replace', startSeq: range.start, endSeq: range.start }, sourceEventSeqs: [range.start] });
     if (scenario.startsWith('append-tail')) provider.onFetch = () => f.agent.session.append('user/message', user('Independent new tail.', 'appended-tail'), { surfaceOp: 'append' });
     if (scenario === 'flush-error') f.ctx.on('session/flush', () => { throw new Error('synthetic flush failure'); });
     const from = f.agent.session.seq;
@@ -203,7 +204,7 @@ export async function failureTrial(variant, scenario, calibration) {
     const outcomeCode = result ? 'success' : error?.code === 'persistence' ? 'persistence-error-after-replacement' : 'rejected';
     return { variant, scenario, outcome: outcomeCode, error: outcome(error), nativeCalls: provider.requests.length, nativeOutputs: provider.responses.length,
       starts: delta.starts, summaries: delta.summaries, ends: delta.ends,
-      nativeReplacement: delta.events.some(e => e.type === 'user/message' && e.data.source.kind === 'plugin' && e.data.source.plugin === 'compact'),
+      nativeReplacement: delta.events.some(e => e.type === 'user/message' && isCompactCheckpointSource(e.data.source)),
       appendedTailSurvived: !scenario.startsWith('append-tail') || f.agent.session.deriveMessages().some(m => m.id === 'appended-tail'),
       selectedRewriteSurvived: scenario !== 'rewrite-selected' || f.agent.session.deriveMessages().some(m => m.id === 'replacement-user') };
   } finally { await f.dispose(); }
@@ -247,16 +248,22 @@ export async function usageAnchorChallenge(variant, calibration) {
     session.append('step/start', { turn, step: 1 });
     session.append('request/header', { header: session.requestHeader(), reason: 'series' });
     const fixtureUsage = { inputTokens: 10000, outputTokens: 10, totalTokens: 10010 };
-    session.append('assistant/message', { turn, step: 1, message: createAssistantMessage({ source: { provider: ROUTE, model: MODEL }, content: [{ type: 'text', text: 'Synthetic reported-usage fixture.' }] }), usage: fixtureUsage }, { surfaceOp: 'append' });
+    session.append('assistant/message', { turn, step: 1, stream: [], message: createAssistantMessage({ source: { provider: ROUTE, model: MODEL }, content: [{ type: 'text', text: 'Synthetic reported-usage fixture.' }] }), usage: fixtureUsage }, { surfaceOp: 'append' });
     session.append('step/end', { turn, step: 1 });
     session.append('turn/end', { turn, reason: { kind: 'completed' } });
     const host = f.ctx.tokenMeter.measure(session);
     assert.equal(host.baseline.kind, 'usage', 'The challenge must actually activate provider-usage reuse.');
-    assert.equal(host.totalTokens, fixtureUsage.totalTokens);
+    // 0.1.7 composes the usage baseline with the surface nodes that follow the
+    // anchor, so the reported total alone is not the whole host total: the
+    // anchor message itself is surface delta (17 heuristic tokens here). The
+    // precondition that matters is that the REPORTED usage became the baseline.
+    assert.equal(host.baseline.tokens, fixtureUsage.totalTokens, 'The reported usage must be reused as the baseline anchor.');
+    assert.equal(host.totalTokens, host.baseline.tokens + host.surfaceDeltaTokens);
     const measured = f.measurement();
     const effective = measured.effectiveTokens;
     const naive = measured.nodes.reduce((total, node) => total + node.effectiveTokens - node.hostTokens, host.totalTokens);
-    return { variant, baselineKind: host.baseline.kind, reportedFixtureTokens: fixtureUsage.totalTokens, hostTokens: host.totalTokens,
+    return { variant, baselineKind: host.baseline.kind, reportedFixtureTokens: fixtureUsage.totalTokens, baselineTokens: host.baseline.tokens,
+      surfaceDeltaTokens: host.surfaceDeltaTokens, hostTokens: host.totalTokens,
       naiveEffectiveTokens: naive, naiveDuplicateAdjustment: naive - host.totalTokens,
       effectiveTokens: effective, duplicateAdjustment: effective - host.totalTokens,
       avoidsDoubleCounting: effective === host.totalTokens, realProviderUsage: false };

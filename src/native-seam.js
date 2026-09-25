@@ -11,10 +11,19 @@ export function isRecoverableNativeFailure(error, signal) {
   return RECOVERABLE.has(code) || /^CODEX_RUNTIME_HTTP_5\d\d$/.test(code ?? '');
 }
 
-/** Per-session preference. Async recovery cannot overwrite a newer live command. */
+/** Per-session preference. Async recovery cannot overwrite a newer live command.
+ *
+ * Effective preference resolution: an explicit session value (on / off /
+ * reader-text) wins; `inherit` and a never-set session follow the CURRENT
+ * agent's preset default (`presetNative`), which is resolved per call from the
+ * preset-local codexNativePolicy row and is false for standard presets. This
+ * includes old sessions created before the preset default existed.
+ */
 export class NativeSessionState {
   constructor(profileNative = false, recoverPreference, recoveryOptions) {
     this.recovery = new CompactionRecovery(recoveryOptions);
+    // Legacy constructor flag kept as the fallback when no preset context is
+    // supplied; the provider entry keeps it false (capability gate only).
     this.profileNative = profileNative === true;
     this.sessions = new Map();
     this.attempts = new Map();
@@ -22,13 +31,13 @@ export class NativeSessionState {
     this.scanning = new Map();
     this.recoverPreference = recoverPreference;
   }
-  setSession(sessionId, mode) {
+  setSession(sessionId, mode, { presetNative = this.profileNative, capability = true } = {}) {
     if (!['on', 'off', 'inherit', 'reader-text'].includes(mode)) throw failure('CODEX_NATIVE_PREF_MODE', 'Preference must be on, off, inherit, or reader-text.');
     if (typeof sessionId !== 'string' || !sessionId) throw failure('CODEX_NATIVE_PREF_SESSION', 'A live session is required.');
     this.scanned.add(sessionId);
     if (mode === 'inherit') this.sessions.delete(sessionId);
     else this.sessions.set(sessionId, mode === 'reader-text' ? mode : mode === 'on');
-    return this.nativeStatus(sessionId);
+    return this.nativeStatus(sessionId, { presetNative, capability });
   }
   async ready(sessionId) {
     if (this.scanned.has(sessionId) || !this.recoverPreference) return;
@@ -46,18 +55,19 @@ export class NativeSessionState {
     const value = this.sessions.get(sessionId);
     return value === undefined ? 'inherit' : value === 'reader-text' ? value : value ? 'on' : 'off';
   }
-  effective(sessionId) {
+  effective(sessionId, presetNative = this.profileNative) {
     const value = this.sessions.get(sessionId);
-    return value === undefined ? this.profileNative : value !== false;
+    return value === undefined ? presetNative === true : value !== false;
   }
   recordAttempt(sessionId, attempt) {
     this.attempts.set(sessionId, { ...attempt, sessionId, at: this.recovery.now() });
     if (this.attempts.size > 4096) this.attempts.delete(this.attempts.keys().next().value);
   }
   lastAttempt(sessionId) { return this.attempts.get(sessionId); }
-  nativeStatus(sessionId) {
-    return { profile: this.profileNative, session: this.sessionPreference(sessionId), effective: this.effective(sessionId),
-      summarizationMode: this.sessionPreference(sessionId) === 'reader-text' ? 'reader-text' : this.effective(sessionId) ? 'native' : 'off',
+  nativeStatus(sessionId, { presetNative = this.profileNative, capability = true } = {}) {
+    const effective = capability !== false && this.effective(sessionId, presetNative);
+    return { capability: capability !== false, preset: presetNative === true, session: this.sessionPreference(sessionId), effective,
+      summarizationMode: this.sessionPreference(sessionId) === 'reader-text' ? 'reader-text' : effective ? 'native' : 'off',
       lastAttempt: this.lastAttempt(sessionId) ?? null, recovery: this.recovery.status(sessionId) };
   }
 }

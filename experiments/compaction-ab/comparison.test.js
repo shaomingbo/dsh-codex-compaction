@@ -64,9 +64,17 @@ test('usage-anchor repair removes the measured double count; the original formul
   try {
     const rows = [];
     for (const variant of VARIANTS) rows.push(await usageAnchorChallenge(variant, c));
-    assert.ok(rows.every(row => row.baselineKind === 'usage' && row.hostTokens === 10010 && row.realProviderUsage === false));
+    assert.ok(rows.every(row => row.baselineKind === 'usage' && row.realProviderUsage === false));
+    // 0.1.7 composes the reused usage baseline with the surface nodes after the
+    // anchor (the anchor message itself contributes 17 heuristic tokens), so the
+    // host total is baseline + surfaceDelta — not the bare reported total.
+    assert.deepEqual(rows.map(row => row.baselineTokens), [10010, 10010, 10010]);
+    assert.ok(rows.every(row => row.hostTokens === row.baselineTokens + row.surfaceDeltaTokens));
     assert.deepEqual(rows.map(row => row.avoidsDoubleCounting), [true, true, true]);
-    assert.deepEqual(rows.map(row => row.effectiveTokens), [10010, 10010, 10010]);
+    // The repaired formula must never add anything on top of the host's own
+    // total, whatever that total is.
+    assert.deepEqual(rows.map(row => row.effectiveTokens), rows.map(row => row.hostTokens));
+    assert.deepEqual(rows.map(row => row.duplicateAdjustment), [0, 0, 0]);
     assert.deepEqual(rows.map(row => row.naiveDuplicateAdjustment), [0, 4293, 2933]);
     // Keep the pre-fix effect reproducible without shipping that defect or
     // treating synthetic reported usage as a real-provider token oracle.

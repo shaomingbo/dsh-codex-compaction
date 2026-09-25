@@ -27,7 +27,7 @@ for (const phase of ['preinstall', 'install', 'postinstall', 'prepare']) if (man
 for (const path of [manifest.main, ...Object.values(manifest.exports), ...Object.values(manifest.bin), manifest.dsh.bundle.patch, 'README.md', 'README.zh.md', 'LICENSE']) {
   if (typeof path !== 'string' || !existsSync(join(root, path)) || !statSync(join(root, path)).isFile()) fail(`Missing package entry: ${path}`);
 }
-if (manifest.version !== '0.4.6') fail('Update source/tag/catalog contracts together when evolving the version.');
+if (manifest.version !== '0.5.0') fail('Update source/tag/catalog contracts together when evolving the version.');
 // Every packaged file entry must exist on disk, and the installer's pinned
 // default source must stay in lockstep with the package version.
 for (const entry of manifest.files) {
@@ -35,9 +35,8 @@ for (const entry of manifest.files) {
 }
 {
   const adapter = readFileSync(join(root, 'src/profile-adapter.js'), 'utf8');
-  const dynamic = adapter.includes('#v${PACKAGE_VERSION}');
   const pinned = adapter.match(/DEFAULT_SOURCE = 'github:shaomingbo\/dsh-codex-compaction#(v[^']+)';/)?.[1];
-  if (!dynamic && pinned !== `v${manifest.version}`) fail(`Installer DEFAULT_SOURCE (${pinned ?? 'absent'}) must equal the package version v${manifest.version}.`);
+  if (pinned !== `v${manifest.version}`) fail(`Installer DEFAULT_SOURCE (${pinned ?? 'absent'}) must equal the package version v${manifest.version}.`);
 }
 // The paired-checkout entry must never bake an account workspace path: the
 // isolated account source is always passed explicitly on the command line.

@@ -26,6 +26,11 @@ function fixture({ failures = [], fallbackFailure, clock = () => Date.now() } = 
     },
   } };
   const engine = { config: { modelPolicies: [], summarizationProvider: '', maxTokens: 100 }, ctx: {
+    // This fixture stands in for the codex-native-b preset: the official
+    // registry seam (agentPresets.serviceFor) resolves its codexNativePolicy.
+    get: name => (name === 'agentPresets'
+      ? { serviceFor: (_agent, service) => (service === 'codexNativePolicy' ? { presetNativeDefault: () => true } : undefined) }
+      : undefined),
     codexBridge: { nativeState: state, adapter: seam.adapter, nativeApplicability: async () => ({ applicable: true }) },
   } };
   return { state, seam, run: (r = request()) => CodexNativeCompactionEngine.prototype.summarize.call(engine,

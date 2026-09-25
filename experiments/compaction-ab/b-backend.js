@@ -258,7 +258,7 @@ async function transact(engine, start, end, agent, signal, manual, sourceCommand
       };
       const summarized = session.append('compaction/summary', data);
       session.append('user/message', message, {
-        surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: [opened.seq, summarized.seq, ...selected.seqs],
+        surfaceOp: { op: 'replace', startSeq: start, endSeq: end }, sourceEventSeqs: [opened.seq, summarized.seq, ...selected.seqs],
       });
       closing = true;
       const ended = session.append('compaction/end', lifecycle);
